@@ -1,2 +1,62 @@
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import httpx
+
+from eval_transcript.omlx import DEFAULT_API_KEY_ENV, OmlxClient, OmlxError
+
+
 def main() -> None:
-    print("Hello from eval-transcript!")
+    parser = argparse.ArgumentParser(description="Benchmark French administration audio transcription models.")
+    subparsers = parser.add_subparsers(dest="command")
+
+    omlx = subparsers.add_parser("omlx", help="Interact with a local oMLX OpenAI-compatible API")
+    omlx_subparsers = omlx.add_subparsers(dest="omlx_command")
+
+    omlx_models = omlx_subparsers.add_parser("models", help="List models exposed by the local oMLX API")
+    omlx_models.add_argument("--base-url", default=None, help="OpenAI-compatible oMLX base URL")
+    omlx_models.add_argument("--api-key", default=None, help=f"oMLX API key; defaults to ${DEFAULT_API_KEY_ENV}")
+
+    omlx_transcribe = omlx_subparsers.add_parser("transcribe", help="Transcribe one audio file through oMLX")
+    omlx_transcribe.add_argument("audio", type=Path, help="Audio file to transcribe")
+    omlx_transcribe.add_argument("--model", required=True, help="Model alias exposed by /v1/models")
+    omlx_transcribe.add_argument("--language", default=None, help="Optional language hint, e.g. fr")
+    omlx_transcribe.add_argument("--base-url", default=None, help="OpenAI-compatible oMLX base URL")
+    omlx_transcribe.add_argument("--api-key", default=None, help=f"oMLX API key; defaults to ${DEFAULT_API_KEY_ENV}")
+    omlx_transcribe.add_argument("--json", action="store_true", help="Print the raw transcription JSON response")
+
+    args = parser.parse_args()
+
+    try:
+        if args.command == "omlx" and args.omlx_command == "models":
+            client = OmlxClient(base_url=args.base_url, api_key=args.api_key)
+            for model in client.list_models():
+                print(model.id)
+            return
+
+        if args.command == "omlx" and args.omlx_command == "transcribe":
+            client = OmlxClient(base_url=args.base_url, api_key=args.api_key)
+            response_format = "verbose_json" if args.json else None
+            result = client.transcribe(
+                model=args.model,
+                audio_path=args.audio,
+                language=args.language,
+                response_format=response_format,
+            )
+            if args.json:
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return
+            print(result.get("text", ""))
+            return
+    except (FileNotFoundError, OmlxError, httpx.HTTPError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.command == "omlx":
+        omlx.print_help()
+    else:
+        parser.print_help()

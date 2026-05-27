@@ -7,7 +7,9 @@ authors = [
     { name = "Luis Arias", email = "luis@refugies.info" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "httpx>=0.28.1",
+]
 
 [project.scripts]
 eval-transcript = "eval_transcript:main"

@@ -18,8 +18,26 @@ This project uses [uv](https://docs.astral.sh/uv/) with a Python `src/` layout.
 
 ```bash
 uv sync
-uv run eval-transcript
+uv run eval-transcript --help
 ```
+
+### oMLX provider
+
+If a local [oMLX](https://github.com/lamalab-org/omlx) server is running with its OpenAI-compatible API on `http://localhost:8000/v1`, set `OMLX_API_KEY` and list available models:
+
+```bash
+uv run eval-transcript omlx models
+```
+
+Transcribe one audio file through a model alias exposed by `/v1/models`:
+
+```bash
+uv run eval-transcript omlx transcribe data/audio/sample.wav \
+  --model whisper-large-v3-asr-fp16 \
+  --language fr
+```
+
+The transcribe command prints text only by default for quick visual comparison against source-of-truth transcripts. Use `--json` to print the raw response with segment metadata.
 
 ## Data layout
 
