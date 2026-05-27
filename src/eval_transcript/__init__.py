@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
-from eval_transcript.omlx import DEFAULT_API_KEY_ENV, OmlxClient
+import httpx
+
+from eval_transcript.omlx import DEFAULT_API_KEY_ENV, OmlxClient, OmlxError
 
 
 def main() -> None:
@@ -28,19 +31,32 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if args.command == "omlx" and args.omlx_command == "models":
-        client = OmlxClient(base_url=args.base_url, api_key=args.api_key)
-        for model in client.list_models():
-            print(model.id)
-        return
-
-    if args.command == "omlx" and args.omlx_command == "transcribe":
-        client = OmlxClient(base_url=args.base_url, api_key=args.api_key)
-        result = client.transcribe(model=args.model, audio_path=args.audio, language=args.language)
-        if args.json:
-            print(json.dumps(result, ensure_ascii=False, indent=2))
+    try:
+        if args.command == "omlx" and args.omlx_command == "models":
+            client = OmlxClient(base_url=args.base_url, api_key=args.api_key)
+            for model in client.list_models():
+                print(model.id)
             return
-        print(result.get("text", ""))
-        return
 
-    parser.print_help()
+        if args.command == "omlx" and args.omlx_command == "transcribe":
+            client = OmlxClient(base_url=args.base_url, api_key=args.api_key)
+            response_format = "verbose_json" if args.json else None
+            result = client.transcribe(
+                model=args.model,
+                audio_path=args.audio,
+                language=args.language,
+                response_format=response_format,
+            )
+            if args.json:
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return
+            print(result.get("text", ""))
+            return
+    except (FileNotFoundError, OmlxError, httpx.HTTPError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.command == "omlx":
+        omlx.print_help()
+    else:
+        parser.print_help()

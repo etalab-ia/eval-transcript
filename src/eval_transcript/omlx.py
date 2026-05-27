@@ -41,19 +41,31 @@ class OmlxClient:
 
     def list_models(self) -> list[OmlxModel]:
         data = self._request_json("GET", "/models")
+        models_list = data.get("data")
+        if not isinstance(models_list, list):
+            return []
         return [
             OmlxModel(id=item["id"], owned_by=item.get("owned_by"))
-            for item in data.get("data", [])
-            if "id" in item
+            for item in models_list
+            if isinstance(item, dict) and "id" in item
         ]
 
-    def transcribe(self, *, model: str, audio_path: Path, language: str | None = None) -> dict[str, Any]:
+    def transcribe(
+        self,
+        *,
+        model: str,
+        audio_path: Path,
+        language: str | None = None,
+        response_format: str | None = None,
+    ) -> dict[str, Any]:
         if not audio_path.exists():
             raise FileNotFoundError(audio_path)
 
         form: dict[str, str] = {"model": model}
         if language:
             form["language"] = language
+        if response_format:
+            form["response_format"] = response_format
 
         with audio_path.open("rb") as audio_file:
             files = {"file": (audio_path.name, audio_file)}
@@ -67,7 +79,10 @@ class OmlxClient:
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 raise OmlxError(f"oMLX API request failed: {exc.response.status_code} {exc.response.reason_phrase} for {url}") from exc
-            data = response.json()
+            try:
+                data = response.json()
+            except ValueError as exc:
+                raise OmlxError(f"Invalid JSON response from {url}") from exc
             if not isinstance(data, dict):
                 raise TypeError(f"Expected JSON object from {url}, got {type(data).__name__}")
             return data
