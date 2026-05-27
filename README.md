@@ -37,6 +37,8 @@ uv run eval-transcript omlx transcribe data/audio/sample.wav \
   --language fr
 ```
 
+The transcribe command prints text only by default for quick visual comparison against source-of-truth transcripts. Use `--json` to print the raw response with segment metadata.
+
 ## Data layout
 
 The repository tracks the directory structure only. Audio and generated transcript artifacts are gitignored by default.

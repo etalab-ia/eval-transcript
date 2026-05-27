@@ -24,6 +24,7 @@ def main() -> None:
     omlx_transcribe.add_argument("--language", default=None, help="Optional language hint, e.g. fr")
     omlx_transcribe.add_argument("--base-url", default=None, help="OpenAI-compatible oMLX base URL")
     omlx_transcribe.add_argument("--api-key", default=None, help=f"oMLX API key; defaults to ${DEFAULT_API_KEY_ENV}")
+    omlx_transcribe.add_argument("--json", action="store_true", help="Print the raw transcription JSON response")
 
     args = parser.parse_args()
 
@@ -36,7 +37,10 @@ def main() -> None:
     if args.command == "omlx" and args.omlx_command == "transcribe":
         client = OmlxClient(base_url=args.base_url, api_key=args.api_key)
         result = client.transcribe(model=args.model, audio_path=args.audio, language=args.language)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return
+        print(result.get("text", ""))
         return
 
     parser.print_help()
