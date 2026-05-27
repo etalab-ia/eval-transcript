@@ -1,0 +1,17 @@
+[project]
+name = "eval-transcript"
+version = "0.1.0"
+description = "Benchmarking service for French administration audio transcription models."
+readme = "README.md"
+authors = [
+    { name = "Luis Arias", email = "luis@refugies.info" }
+]
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+eval-transcript = "eval_transcript:main"
+
+[build-system]
+requires = ["uv_build>=0.11.14,<0.12.0"]
+build-backend = "uv_build"

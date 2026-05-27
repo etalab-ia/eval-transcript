@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+
+# Tooling and caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Benchmark data: keep directory structure, not data artifacts
+/data/audio/**
+!/data/audio/.gitkeep
+/data/source_truth/**
+!/data/source_truth/.gitkeep
+/data/transcriptions/**
+!/data/transcriptions/.gitkeep

@@ -1,0 +1,8 @@
+[pre-start]
+deps = "uv sync"
+
+[post-start]
+copy = "wt step copy-ignored"
+
+[post-switch]
+deps = "uv sync"

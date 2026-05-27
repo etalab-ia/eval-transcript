@@ -1,0 +1,3 @@
+# Files copied by `wt step copy-ignored` from main to new worktrees.
+.env
+.env.*
