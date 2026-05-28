@@ -7,12 +7,19 @@ from pathlib import Path
 
 import httpx
 
+from eval_transcript.manifest import DEFAULT_MANIFEST_PATH, discover_samples, render_manifest
 from eval_transcript.omlx import DEFAULT_API_KEY_ENV, OmlxClient, OmlxError
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Benchmark French administration audio transcription models.")
     subparsers = parser.add_subparsers(dest="command")
+
+    manifest = subparsers.add_parser("manifest", help="Manage the benchmark manifest")
+    manifest_subparsers = manifest.add_subparsers(dest="manifest_command")
+
+    manifest_sync = manifest_subparsers.add_parser("sync", help="Write data/manifest.md from current benchmark files")
+    manifest_sync.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST_PATH, help="Manifest path to write")
 
     omlx = subparsers.add_parser("omlx", help="Interact with a local oMLX OpenAI-compatible API")
     omlx_subparsers = omlx.add_subparsers(dest="omlx_command")
@@ -43,6 +50,13 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
+        if args.command == "manifest" and args.manifest_command == "sync":
+            manifest_text = render_manifest(discover_samples())
+            args.manifest.parent.mkdir(parents=True, exist_ok=True)
+            args.manifest.write_text(manifest_text, encoding="utf-8")
+            print(args.manifest)
+            return
+
         if args.command == "omlx" and args.omlx_command == "models":
             client = OmlxClient(base_url=args.base_url, api_key=args.api_key)
             for model in client.list_models():
@@ -82,7 +96,9 @@ def main() -> None:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    if args.command == "omlx":
+    if args.command == "manifest":
+        manifest.print_help()
+    elif args.command == "omlx":
         omlx.print_help()
     else:
         parser.print_help()
