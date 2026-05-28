@@ -39,6 +39,15 @@ uv run eval-transcript omlx transcribe data/audio/sample.wav \
 
 The transcribe command prints text only by default for quick visual comparison against source-of-truth transcripts. Use `--json` to print the raw response with segment metadata.
 
+To save the text output for later comparison, use `--save`. The file is written to `data/transcriptions/<audio-stem>/omlx__<model>.txt`:
+
+```bash
+uv run eval-transcript omlx transcribe data/audio/sample.wav \
+  --model whisper-large-v3-asr-fp16 \
+  --language fr \
+  --save
+```
+
 ## Data layout
 
 The repository tracks the directory structure only. Audio and generated transcript artifacts are gitignored by default.

@@ -28,6 +28,17 @@ def main() -> None:
     omlx_transcribe.add_argument("--base-url", default=None, help="OpenAI-compatible oMLX base URL")
     omlx_transcribe.add_argument("--api-key", default=None, help=f"oMLX API key; defaults to ${DEFAULT_API_KEY_ENV}")
     omlx_transcribe.add_argument("--json", action="store_true", help="Print the raw transcription JSON response")
+    omlx_transcribe.add_argument(
+        "--save",
+        action="store_true",
+        help="Write text output to data/transcriptions/<audio-stem>/omlx__<model>.txt",
+    )
+    omlx_transcribe.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Directory for saved text output; defaults to data/transcriptions and implies --save",
+    )
 
     args = parser.parse_args()
 
@@ -50,7 +61,19 @@ def main() -> None:
             if args.json:
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return
-            print(result.get("text", ""))
+            text = result.get("text", "")
+            if args.save or args.output_dir:
+                output_path = transcription_output_path(
+                    output_dir=args.output_dir or Path("data/transcriptions"),
+                    audio_path=args.audio,
+                    provider="omlx",
+                    model=args.model,
+                )
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(text, encoding="utf-8")
+                print(output_path)
+                return
+            print(text)
             return
     except (FileNotFoundError, OmlxError, httpx.HTTPError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -60,3 +83,11 @@ def main() -> None:
         omlx.print_help()
     else:
         parser.print_help()
+
+
+def transcription_output_path(*, output_dir: Path, audio_path: Path, provider: str, model: str) -> Path:
+    return output_dir / audio_path.stem / f"{safe_filename(provider)}__{safe_filename(model)}.txt"
+
+
+def safe_filename(value: str) -> str:
+    return "".join(character if character.isalnum() or character in "._-" else "_" for character in value).strip("._")
