@@ -26,7 +26,9 @@ def build_transcription_output(
     output_dir: Path | None = None,
     include_json: bool = False,
 ) -> TranscriptionOutput:
-    text = result.get("text") or ""
+    text = result.get("text")
+    if not isinstance(text, str):
+        text = ""
     saved_path = None
     if save or output_dir:
         saved_path = transcription_output_path(
