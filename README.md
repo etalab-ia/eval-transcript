@@ -54,7 +54,16 @@ The repository tracks the directory structure only. Audio and generated transcri
 
 ```text
 data/
+├── manifest.md        # benchmark index generated from local data files
 ├── audio/             # input audio files
 ├── source_truth/      # human/source-of-truth transcripts
 └── transcriptions/    # model-generated transcripts
 ```
+
+Generate or refresh the global benchmark manifest after adding local data files:
+
+```bash
+uv run eval-transcript manifest sync
+```
+
+`data/manifest.md` uses Markdown with YAML frontmatter to index samples, source-truth paths, generated outputs, and placeholder metadata such as language, duration, domain, runtime, and real-time factor.
