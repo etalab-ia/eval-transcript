@@ -58,10 +58,7 @@ def main() -> None:
                 language=args.language,
                 response_format=response_format,
             )
-            if args.json:
-                print(json.dumps(result, ensure_ascii=False, indent=2))
-                return
-            text = result.get("text", "")
+            text = result.get("text") or ""
             if args.save or args.output_dir:
                 output_path = transcription_output_path(
                     output_dir=args.output_dir or Path("data/transcriptions"),
@@ -71,7 +68,13 @@ def main() -> None:
                 )
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 output_path.write_text(text, encoding="utf-8")
+                if args.json:
+                    print(json.dumps(result, ensure_ascii=False, indent=2))
+                    return
                 print(output_path)
+                return
+            if args.json:
+                print(json.dumps(result, ensure_ascii=False, indent=2))
                 return
             print(text)
             return
@@ -86,7 +89,7 @@ def main() -> None:
 
 
 def transcription_output_path(*, output_dir: Path, audio_path: Path, provider: str, model: str) -> Path:
-    return output_dir / audio_path.stem / f"{safe_filename(provider)}__{safe_filename(model)}.txt"
+    return output_dir / safe_filename(audio_path.stem) / f"{safe_filename(provider)}__{safe_filename(model)}.txt"
 
 
 def safe_filename(value: str) -> str:
