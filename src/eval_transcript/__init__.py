@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -9,6 +8,7 @@ import httpx
 
 from eval_transcript.manifest import DEFAULT_MANIFEST_PATH, discover_samples, render_manifest
 from eval_transcript.omlx import DEFAULT_API_KEY_ENV, OmlxClient, OmlxError
+from eval_transcript.transcriptions import build_transcription_output, print_transcription_output
 
 
 def main() -> None:
@@ -72,25 +72,16 @@ def main() -> None:
                 language=args.language,
                 response_format=response_format,
             )
-            text = result.get("text") or ""
-            if args.save or args.output_dir:
-                output_path = transcription_output_path(
-                    output_dir=args.output_dir or Path("data/transcriptions"),
-                    audio_path=args.audio,
-                    provider="omlx",
-                    model=args.model,
-                )
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                output_path.write_text(text, encoding="utf-8")
-                if args.json:
-                    print(json.dumps(result, ensure_ascii=False, indent=2))
-                    return
-                print(output_path)
-                return
-            if args.json:
-                print(json.dumps(result, ensure_ascii=False, indent=2))
-                return
-            print(text)
+            output = build_transcription_output(
+                result=result,
+                audio_path=args.audio,
+                provider="omlx",
+                model=args.model,
+                save=args.save,
+                output_dir=args.output_dir,
+                include_json=args.json,
+            )
+            print_transcription_output(output)
             return
     except (FileNotFoundError, OmlxError, httpx.HTTPError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -102,11 +93,3 @@ def main() -> None:
         omlx.print_help()
     else:
         parser.print_help()
-
-
-def transcription_output_path(*, output_dir: Path, audio_path: Path, provider: str, model: str) -> Path:
-    return output_dir / safe_filename(audio_path.stem) / f"{safe_filename(provider)}__{safe_filename(model)}.txt"
-
-
-def safe_filename(value: str) -> str:
-    return "".join(character if character.isalnum() or character in "._-" else "_" for character in value).strip("._")
