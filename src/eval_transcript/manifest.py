@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,28 +40,31 @@ def discover_samples(
 
 def discover_sample_ids(*, audio_dir: Path, source_truth_dir: Path, transcriptions_dir: Path) -> list[str]:
     sample_ids: set[str] = set()
-    if audio_dir.exists():
+    if audio_dir.is_dir():
         sample_ids.update(path.stem for path in audio_dir.iterdir() if path.is_file() and path.suffix.lower() in AUDIO_SUFFIXES)
-    if source_truth_dir.exists():
+    if source_truth_dir.is_dir():
         sample_ids.update(path.stem for path in source_truth_dir.iterdir() if path.is_file() and path.suffix.lower() == ".md")
-    if transcriptions_dir.exists():
+    if transcriptions_dir.is_dir():
         sample_ids.update(path.name for path in transcriptions_dir.iterdir() if path.is_dir())
     return sorted(sample_ids)
 
 
 def find_audio_path(audio_dir: Path, sample_id: str) -> Path:
-    matches = sorted(path for path in audio_dir.glob(f"{sample_id}.*") if path.is_file() and path.suffix.lower() in AUDIO_SUFFIXES)
-    return matches[0] if matches else audio_dir / f"{sample_id}.wav"
+    for suffix in sorted(AUDIO_SUFFIXES):
+        path = audio_dir / f"{sample_id}{suffix}"
+        if path.is_file():
+            return path
+    return audio_dir / f"{sample_id}.wav"
 
 
 def find_source_truth_path(source_truth_dir: Path, sample_id: str) -> Path | None:
     path = source_truth_dir / f"{sample_id}.md"
-    return path if path.exists() else None
+    return path if path.is_file() else None
 
 
 def find_output_paths(transcriptions_dir: Path, sample_id: str) -> list[Path]:
     sample_dir = transcriptions_dir / sample_id
-    if not sample_dir.exists():
+    if not sample_dir.is_dir():
         return []
     return sorted(path for path in sample_dir.glob("*.txt") if path.is_file())
 
@@ -125,5 +129,4 @@ def parse_output_name(path: Path) -> tuple[str, str]:
 
 
 def quote_yaml(value: str) -> str:
-    escaped = value.replace('"', '\\"')
-    return f'"{escaped}"'
+    return json.dumps(value)
