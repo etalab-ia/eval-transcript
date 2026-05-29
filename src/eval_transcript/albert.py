@@ -89,9 +89,11 @@ class AlbertClient:
             try:
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
-                raise AlbertError(
-                    f"Albert API request failed: {exc.response.status_code} {exc.response.reason_phrase} for {url}"
-                ) from exc
+                message = f"Albert API request failed: {exc.response.status_code} {exc.response.reason_phrase} for {url}"
+                detail = response_error_detail(exc.response)
+                if detail:
+                    message = f"{message} - {detail}"
+                raise AlbertError(message) from exc
             try:
                 data = response.json()
             except ValueError as exc:
@@ -103,3 +105,24 @@ class AlbertClient:
 
 class AlbertError(RuntimeError):
     """Raised when Albert API returns an error."""
+
+
+def response_error_detail(response: httpx.Response) -> str:
+    try:
+        data = response.json()
+    except ValueError:
+        return response.text.strip()
+    if not isinstance(data, dict):
+        return ""
+
+    error = data.get("error")
+    if isinstance(error, dict):
+        message = error.get("message")
+        if message:
+            return str(message)
+
+    detail = data.get("detail")
+    if detail:
+        return str(detail)
+
+    return ""
