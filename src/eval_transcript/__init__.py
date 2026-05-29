@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -23,6 +22,7 @@ from eval_transcript.scaleway import (
     ScalewayError,
     transcription_text as scaleway_transcription_text,
 )
+from eval_transcript.transcriptions import TranscriptionOutput, print_transcription_output, transcription_text
 
 
 def main() -> None:
@@ -105,8 +105,19 @@ def main() -> None:
             client = AlbertClient(base_url=args.base_url, api_key=args.api_key)
             response_format = "json" if args.json else None
             result = client.transcribe(model=args.model, audio_path=args.audio, language=args.language, prompt=args.prompt, response_format=response_format, temperature=args.temperature)
-            text = result.get("text") or ""
-            print_or_save_result(result=result, text=text, json_output=args.json, save=args.save, output_dir=args.output_dir, audio_path=args.audio, provider="albert", model=args.model)
+            text = transcription_text(result.get("text"))
+            print_transcription_output(
+                TranscriptionOutput(
+                    result=result,
+                    text=text,
+                    json_output=args.json,
+                    save=args.save,
+                    output_dir=args.output_dir,
+                    audio_path=args.audio,
+                    provider="albert",
+                    model=args.model,
+                )
+            )
             return
 
         if args.command == "scaleway" and args.scaleway_command == "models":
@@ -119,7 +130,18 @@ def main() -> None:
             client = ScalewayClient(secret_key=args.api_key)
             result = client.transcribe(audio_path=args.audio, model=args.model, prompt=args.prompt, temperature=args.temperature, max_tokens=args.max_tokens, top_p=args.top_p)
             text = scaleway_transcription_text(result)
-            print_or_save_result(result=result, text=text, json_output=args.json, save=args.save, output_dir=args.output_dir, audio_path=args.audio, provider="scaleway", model=args.model)
+            print_transcription_output(
+                TranscriptionOutput(
+                    result=result,
+                    text=text,
+                    json_output=args.json,
+                    save=args.save,
+                    output_dir=args.output_dir,
+                    audio_path=args.audio,
+                    provider="scaleway",
+                    model=args.model,
+                )
+            )
             return
 
         if args.command == "omlx" and args.omlx_command == "models":
@@ -132,8 +154,19 @@ def main() -> None:
             client = OmlxClient(base_url=args.base_url, api_key=args.api_key)
             response_format = "verbose_json" if args.json else None
             result = client.transcribe(model=args.model, audio_path=args.audio, language=args.language, response_format=response_format)
-            text = result.get("text") or ""
-            print_or_save_result(result=result, text=text, json_output=args.json, save=args.save, output_dir=args.output_dir, audio_path=args.audio, provider="omlx", model=args.model)
+            text = transcription_text(result.get("text"))
+            print_transcription_output(
+                TranscriptionOutput(
+                    result=result,
+                    text=text,
+                    json_output=args.json,
+                    save=args.save,
+                    output_dir=args.output_dir,
+                    audio_path=args.audio,
+                    provider="omlx",
+                    model=args.model,
+                )
+            )
             return
     except (FileNotFoundError, AlbertError, ScalewayError, OmlxError, httpx.HTTPError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -150,26 +183,3 @@ def main() -> None:
     else:
         parser.print_help()
 
-
-def print_or_save_result(*, result: dict, text: str, json_output: bool, save: bool, output_dir: Path | None, audio_path: Path, provider: str, model: str) -> None:
-    if save or output_dir:
-        output_path = transcription_output_path(output_dir=output_dir or Path("data/transcriptions"), audio_path=audio_path, provider=provider, model=model)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(text, encoding="utf-8")
-        if json_output:
-            print(json.dumps(result, ensure_ascii=False, indent=2))
-            return
-        print(output_path)
-        return
-    if json_output:
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return
-    print(text)
-
-
-def transcription_output_path(*, output_dir: Path, audio_path: Path, provider: str, model: str) -> Path:
-    return output_dir / safe_filename(audio_path.stem) / f"{safe_filename(provider)}__{safe_filename(model)}.txt"
-
-
-def safe_filename(value: str) -> str:
-    return "".join(character if character.isalnum() or character in "._-" else "_" for character in value).strip("._")
