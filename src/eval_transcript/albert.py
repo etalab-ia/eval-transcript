@@ -1,0 +1,102 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+
+DEFAULT_BASE_URL = "https://albert.api.etalab.gouv.fr/v1"
+DEFAULT_TIMEOUT_SECONDS = 120.0
+DEFAULT_API_KEY_ENV = "ALBERT_API_KEY"
+DEFAULT_TRANSCRIPTION_MODEL = "openai/whisper-large-v3"
+
+
+@dataclass(frozen=True)
+class AlbertModel:
+    id: str
+    type: str | None = None
+    owned_by: str | None = None
+
+
+class AlbertClient:
+    """Small client for Albert API's OpenAI-compatible endpoints."""
+
+    def __init__(
+        self,
+        *,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        self.base_url = (base_url or os.getenv("ALBERT_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
+        self.api_key = api_key if api_key is not None else os.getenv(DEFAULT_API_KEY_ENV)
+        self.timeout = timeout
+
+    @property
+    def headers(self) -> dict[str, str]:
+        if not self.api_key:
+            return {}
+        return {"Authorization": f"Bearer {self.api_key}"}
+
+    def list_models(self) -> list[AlbertModel]:
+        data = self._request_json("GET", "/models")
+        models_list = data.get("data")
+        if not isinstance(models_list, list):
+            return []
+        return [
+            AlbertModel(id=item["id"], type=item.get("type"), owned_by=item.get("owned_by"))
+            for item in models_list
+            if isinstance(item, dict) and "id" in item
+        ]
+
+    def transcribe(
+        self,
+        *,
+        model: str,
+        audio_path: Path,
+        language: str | None = None,
+        prompt: str | None = None,
+        response_format: str | None = None,
+        temperature: float | None = None,
+    ) -> dict[str, Any]:
+        if not audio_path.exists():
+            raise FileNotFoundError(audio_path)
+
+        form: dict[str, str] = {"model": model}
+        if language:
+            form["language"] = language
+        if prompt:
+            form["prompt"] = prompt
+        if response_format:
+            form["response_format"] = response_format
+        if temperature is not None:
+            form["temperature"] = str(temperature)
+
+        with audio_path.open("rb") as audio_file:
+            files = {"file": (audio_path.name, audio_file)}
+            return self._request_json("POST", "/audio/transcriptions", data=form, files=files)
+
+    def _request_json(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        url = f"{self.base_url}{path}"
+        with httpx.Client(timeout=self.timeout, headers=self.headers, trust_env=False) as client:
+            response = client.request(method, url, **kwargs)
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise AlbertError(
+                    f"Albert API request failed: {exc.response.status_code} {exc.response.reason_phrase} for {url}"
+                ) from exc
+            try:
+                data = response.json()
+            except ValueError as exc:
+                raise AlbertError(f"Invalid JSON response from {url}") from exc
+            if not isinstance(data, dict):
+                raise TypeError(f"Expected JSON object from {url}, got {type(data).__name__}")
+            return data
+
+
+class AlbertError(RuntimeError):
+    """Raised when Albert API returns an error."""

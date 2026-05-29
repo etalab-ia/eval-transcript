@@ -48,6 +48,24 @@ uv run eval-transcript omlx transcribe data/audio/sample.wav \
   --save
 ```
 
+### Albert API provider
+
+Set `ALBERT_API_KEY` and `ALBERT_BASE_URL` (for example `https://albert.api.etalab.gouv.fr/v1`) to use Albert API's audio transcription endpoint. List available models:
+
+```bash
+uv run eval-transcript albert models
+```
+
+Transcribe one audio file with Albert's Whisper model:
+
+```bash
+uv run eval-transcript albert transcribe data/audio/sample.wav \
+  --model openai/whisper-large-v3 \
+  --language fr
+```
+
+The transcribe command prints text only by default. Use `--json` to print the raw response, or `--save` to write `data/transcriptions/<audio-stem>/albert__<model>.txt`.
+
 ## Data layout
 
 The repository tracks the directory structure only. Audio and generated transcript artifacts are gitignored by default.
