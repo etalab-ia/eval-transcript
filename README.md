@@ -21,6 +21,13 @@ uv sync
 uv run eval-transcript --help
 ```
 
+The CLI reads API configuration from process environment variables or explicit `--base-url` / `--api-key` flags. It does not load `.env` files automatically. For local development, copy `.env.example` to `.env`, fill in the secrets, then export it before running commands:
+
+```bash
+cp .env.example .env
+set -a; source .env; set +a
+```
+
 ### oMLX provider
 
 If a local [oMLX](https://github.com/lamalab-org/omlx) server is running with its OpenAI-compatible API on `http://localhost:8000/v1`, set `OMLX_API_KEY` and list available models:
