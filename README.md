@@ -21,6 +21,12 @@ uv sync
 uv run eval-transcript --help
 ```
 
+The CLI loads a `.env` file from the current working directory before reading provider configuration. Explicit environment variables already set in the process take precedence, and `--base-url` / `--api-key` flags override both. For local development, copy `.env.example` to `.env` and fill in the secrets:
+
+```bash
+cp .env.example .env
+```
+
 ### oMLX provider
 
 If a local [oMLX](https://github.com/lamalab-org/omlx) server is running with its OpenAI-compatible API on `http://localhost:8000/v1`, set `OMLX_API_KEY` and list available models:
@@ -47,6 +53,24 @@ uv run eval-transcript omlx transcribe data/audio/sample.wav \
   --language fr \
   --save
 ```
+
+### Albert API provider
+
+Set `ALBERT_API_KEY` and `ALBERT_BASE_URL` (for example `https://albert.api.etalab.gouv.fr/v1`) to use Albert API's audio transcription endpoint. List available models:
+
+```bash
+uv run eval-transcript albert models
+```
+
+Transcribe one audio file with Albert's Whisper model:
+
+```bash
+uv run eval-transcript albert transcribe data/audio/sample.wav \
+  --model openai/whisper-large-v3 \
+  --language fr
+```
+
+The transcribe command prints text only by default. Use `--json` to print the raw response, or `--save` to write `data/transcriptions/<audio-stem>/albert__<model>.txt`.
 
 ## Data layout
 
