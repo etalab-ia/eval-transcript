@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import os
 from pathlib import Path
 from typing import Any
@@ -32,26 +33,44 @@ class HuggingFaceClient:
         provider: str = DEFAULT_PROVIDER,
     ) -> None:
         self.api_key = api_key if api_key is not None else os.getenv(DEFAULT_API_KEY_ENV)
+        if not self.api_key:
+            raise HuggingFaceError(f"{DEFAULT_API_KEY_ENV} is required for Hugging Face transcription")
         self.provider = provider
 
     def transcribe(self, *, audio_path: Path, model: str = DEFAULT_PARAKEET_MODEL) -> dict[str, Any]:
-        if not self.api_key:
-            raise HuggingFaceError(f"{DEFAULT_API_KEY_ENV} is required for Hugging Face transcription")
         if not audio_path.exists():
             raise FileNotFoundError(audio_path)
 
-        client = InferenceClient(provider=self.provider, api_key=self.api_key)
+        provider = None if self.provider == "auto" else self.provider
+        client = InferenceClient(provider=provider, api_key=self.api_key)
         try:
             output = client.automatic_speech_recognition(audio_path, model=model)
         except Exception as exc:
             raise helpful_huggingface_error(model=model, provider=self.provider, exc=exc) from exc
 
-        text = getattr(output, "text", "")
-        chunks = getattr(output, "chunks", None)
+        text, chunks = output_text_and_chunks(output)
         result: dict[str, Any] = {"text": text}
         if chunks is not None:
-            result["chunks"] = [chunk.model_dump() if hasattr(chunk, "model_dump") else chunk for chunk in chunks]
+            result["chunks"] = [serializable_chunk(chunk) for chunk in chunks]
         return result
+
+
+def output_text_and_chunks(output: Any) -> tuple[str, Any | None]:
+    if isinstance(output, str):
+        return output, None
+    if isinstance(output, dict):
+        text = output.get("text", "")
+        return text if isinstance(text, str) else "", output.get("chunks")
+    text = getattr(output, "text", "")
+    return text if isinstance(text, str) else "", getattr(output, "chunks", None)
+
+
+def serializable_chunk(chunk: Any) -> Any:
+    if dataclasses.is_dataclass(chunk):
+        return dataclasses.asdict(chunk)
+    if hasattr(chunk, "model_dump"):
+        return chunk.model_dump()
+    return chunk
 
 
 class HuggingFaceError(RuntimeError):
