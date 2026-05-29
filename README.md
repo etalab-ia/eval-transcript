@@ -54,6 +54,28 @@ uv run eval-transcript omlx transcribe data/audio/sample.wav \
   --save
 ```
 
+### Hugging Face Inference Providers
+
+The CLI includes a guarded Hugging Face provider command for Parakeet so the benchmark has a clear path once hosted inference is restored:
+
+```bash
+uv run eval-transcript huggingface transcribe data/audio/sample.flac \
+  --model nvidia/parakeet-tdt-0.6b-v3
+```
+
+Set `HF_TOKEN` to a token with Inference Providers permission. As of the current tested `huggingface_hub` release, this command intentionally fails with a detailed upstream explanation for `nvidia/parakeet-tdt-0.6b-v3`: the Hub model page advertises Together ASR availability, but `huggingface_hub` removed Together `automatic-speech-recognition` support in `v1.16.1` after a multipart upload dependency regression. The relevant upstream PRs are:
+
+- `huggingface/huggingface_hub#4164`: added Together ASR support in `v1.16.0`
+- `huggingface/huggingface_hub#4248`: removed Together ASR support in `v1.16.1`, with a note that it should be re-added later
+
+Until Hugging Face publishes a patch release that restores Together ASR for this model, use the local oMLX Parakeet path instead:
+
+```bash
+uv run eval-transcript omlx transcribe data/audio/sample.wav \
+  --model parakeet-tdt-0.6b-v3 \
+  --language fr
+```
+
 ### Albert API provider
 
 Set `ALBERT_API_KEY` and `ALBERT_BASE_URL` (for example `https://albert.api.etalab.gouv.fr/v1`) to use Albert API's audio transcription endpoint. List available models:
