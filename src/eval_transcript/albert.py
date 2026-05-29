@@ -12,6 +12,7 @@ DEFAULT_BASE_URL = "https://albert.api.etalab.gouv.fr/v1"
 DEFAULT_TIMEOUT_SECONDS = 120.0
 DEFAULT_API_KEY_ENV = "ALBERT_API_KEY"
 DEFAULT_TRANSCRIPTION_MODEL = "openai/whisper-large-v3"
+JSON_TRANSCRIPTION_RESPONSE_FORMATS = {"json", "verbose_json", "diarized_json"}
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,8 @@ class AlbertClient:
     ) -> dict[str, Any]:
         if not audio_path.exists():
             raise FileNotFoundError(audio_path)
+        if response_format and response_format not in JSON_TRANSCRIPTION_RESPONSE_FORMATS:
+            raise AlbertError(f"Unsupported JSON transcription response format: {response_format}")
 
         form: dict[str, str] = {"model": model}
         if language:
@@ -81,7 +84,7 @@ class AlbertClient:
 
     def _request_json(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
-        with httpx.Client(timeout=self.timeout, headers=self.headers, trust_env=False) as client:
+        with httpx.Client(timeout=self.timeout, headers=self.headers) as client:
             response = client.request(method, url, **kwargs)
             try:
                 response.raise_for_status()
@@ -94,7 +97,7 @@ class AlbertClient:
             except ValueError as exc:
                 raise AlbertError(f"Invalid JSON response from {url}") from exc
             if not isinstance(data, dict):
-                raise TypeError(f"Expected JSON object from {url}, got {type(data).__name__}")
+                raise AlbertError(f"Expected JSON object from {url}, got {type(data).__name__}")
             return data
 
 
