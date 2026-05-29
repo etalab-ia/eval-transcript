@@ -75,7 +75,7 @@ The transcribe command prints text only by default. Use `--json` to print the ra
 
 ### Scaleway provider
 
-Scaleway Generative APIs expose Voxtral through an OpenAI-compatible chat completions endpoint. Set `SCW_SECRET_KEY` for inference, plus `SCW_ACCESS_KEY`, `SCW_DEFAULT_ORGANIZATION_ID`, `SCW_DEFAULT_PROJECT_ID`, and optionally `SCW_DEFAULT_REGION` for model discovery through the Scaleway SDK. When `SCALEWAY_BASE_URL` is unset, the CLI uses `https://api.scaleway.ai/<SCW_DEFAULT_PROJECT_ID>/v1` so requests are scoped to the configured project.
+Scaleway Generative APIs expose Voxtral through an OpenAI-compatible chat completions endpoint. Set `SCW_SECRET_KEY` for inference, plus `SCW_ACCESS_KEY`, `SCW_DEFAULT_ORGANIZATION_ID`, `SCW_DEFAULT_PROJECT_ID`, and optionally `SCW_DEFAULT_REGION` for model discovery through the Scaleway SDK. The CLI derives the project-scoped Generative APIs URL from `SCW_DEFAULT_PROJECT_ID`.
 
 List Voxtral models available through Scaleway Managed Inference:
 

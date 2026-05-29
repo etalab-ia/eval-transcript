@@ -65,7 +65,6 @@ def main() -> None:
     scaleway_transcribe.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature")
     scaleway_transcribe.add_argument("--max-tokens", type=int, default=2048, help="Maximum output tokens")
     scaleway_transcribe.add_argument("--top-p", type=float, default=0.95, help="Nucleus sampling value")
-    scaleway_transcribe.add_argument("--base-url", default=None, help="Scaleway Generative APIs base URL")
     scaleway_transcribe.add_argument("--api-key", default=None, help="Scaleway secret key; defaults to $SCW_SECRET_KEY")
     scaleway_transcribe.add_argument("--json", action="store_true", help="Print the raw chat completion JSON response")
     scaleway_transcribe.add_argument("--save", action="store_true", help="Write text output to data/transcriptions/<audio-stem>/scaleway__<model>.txt")
@@ -117,7 +116,7 @@ def main() -> None:
             return
 
         if args.command == "scaleway" and args.scaleway_command == "transcribe":
-            client = ScalewayClient(base_url=args.base_url, secret_key=args.api_key)
+            client = ScalewayClient(secret_key=args.api_key)
             result = client.transcribe(audio_path=args.audio, model=args.model, prompt=args.prompt, temperature=args.temperature, max_tokens=args.max_tokens, top_p=args.top_p)
             text = scaleway_transcription_text(result)
             print_or_save_result(result=result, text=text, json_output=args.json, save=args.save, output_dir=args.output_dir, audio_path=args.audio, provider="scaleway", model=args.model)

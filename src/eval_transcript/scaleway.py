@@ -12,7 +12,7 @@ from scaleway import ScalewayException
 from scaleway.inference.v1 import InferenceV1API
 
 
-DEFAULT_BASE_URL = "https://api.scaleway.ai/v1"
+BASE_URL_TEMPLATE = "https://api.scaleway.ai/{project_id}/v1"
 DEFAULT_REGION = "fr-par"
 DEFAULT_TIMEOUT_SECONDS = 120.0
 DEFAULT_MODEL = "voxtral-small-24b-2507"
@@ -34,13 +34,20 @@ class ScalewayClient:
     def __init__(
         self,
         *,
-        base_url: str | None = None,
+        access_key: str | None = None,
         secret_key: str | None = None,
+        organization_id: str | None = None,
+        project_id: str | None = None,
         region: str | None = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
-        self.base_url = (base_url or os.getenv("SCALEWAY_BASE_URL") or default_base_url()).rstrip("/")
+        self.access_key = access_key if access_key is not None else os.getenv("SCW_ACCESS_KEY")
         self.secret_key = secret_key if secret_key is not None else os.getenv("SCW_SECRET_KEY")
+        self.organization_id = (
+            organization_id if organization_id is not None else os.getenv("SCW_DEFAULT_ORGANIZATION_ID")
+        )
+        self.project_id = project_id if project_id is not None else os.getenv("SCW_DEFAULT_PROJECT_ID")
+        self.base_url = generative_api_base_url(self.project_id)
         self.region = region or os.getenv("SCW_DEFAULT_REGION") or DEFAULT_REGION
         self.timeout = timeout
 
@@ -51,9 +58,13 @@ class ScalewayClient:
         return {"Authorization": f"Bearer {self.secret_key}"}
 
     def list_models(self, *, name: str | None = None) -> list[ScalewayModel]:
-        sdk_client = ScalewaySdkClient.from_env()
-        if not sdk_client.default_region:
-            sdk_client.default_region = self.region
+        sdk_client = ScalewaySdkClient(
+            access_key=self.access_key,
+            secret_key=self.secret_key,
+            default_organization_id=self.organization_id,
+            default_project_id=self.project_id,
+            default_region=self.region,
+        )
         api = InferenceV1API(sdk_client)
         try:
             models = api.list_models_all(region=self.region, name=name)
@@ -74,6 +85,10 @@ class ScalewayClient:
         max_tokens: int = 2048,
         top_p: float = 0.95,
     ) -> dict[str, Any]:
+        if not self.secret_key:
+            raise ScalewayError("SCW_SECRET_KEY is required for Scaleway transcription")
+        if not self.project_id:
+            raise ScalewayError("SCW_DEFAULT_PROJECT_ID is required for Scaleway transcription")
         if not audio_path.exists():
             raise FileNotFoundError(audio_path)
         audio_format = audio_path.suffix.lower().lstrip(".")
@@ -141,11 +156,10 @@ def transcription_text(result: dict[str, Any]) -> str:
     return ""
 
 
-def default_base_url() -> str:
-    project_id = os.getenv("SCW_DEFAULT_PROJECT_ID")
-    if project_id:
-        return f"https://api.scaleway.ai/{project_id}/v1"
-    return DEFAULT_BASE_URL
+def generative_api_base_url(project_id: str | None) -> str:
+    if not project_id:
+        return ""
+    return BASE_URL_TEMPLATE.format(project_id=project_id)
 
 
 def response_error_detail(response: httpx.Response) -> str:
