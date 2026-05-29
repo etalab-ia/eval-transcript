@@ -38,17 +38,13 @@ def print_transcription_output(output: TranscriptionOutput) -> None:
     if output.should_save:
         output.path.parent.mkdir(parents=True, exist_ok=True)
         output.path.write_text(output.text, encoding="utf-8")
-        if output.json_output:
-            print(json.dumps(output.result, ensure_ascii=False, indent=2))
-            return
-        print(output.path)
-        return
 
     if output.json_output:
         print(json.dumps(output.result, ensure_ascii=False, indent=2))
-        return
-
-    print(output.text)
+    elif output.should_save:
+        print(output.path)
+    else:
+        print(output.text)
 
 
 def transcription_output_path(*, output_dir: Path, audio_path: Path, provider: str, model: str) -> Path:
