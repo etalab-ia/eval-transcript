@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -18,6 +19,8 @@ from eval_transcript.omlx import DEFAULT_API_KEY_ENV as OMLX_API_KEY_ENV, OmlxCl
 
 
 def main() -> None:
+    load_dotenv()
+
     parser = argparse.ArgumentParser(description="Benchmark French administration audio transcription models.")
     subparsers = parser.add_subparsers(dest="command")
 
@@ -184,3 +187,33 @@ def transcription_output_path(*, output_dir: Path, audio_path: Path, provider: s
 
 def safe_filename(value: str) -> str:
     return "".join(character if character.isalnum() or character in "._-" else "_" for character in value).strip("._")
+
+
+def load_dotenv(path: Path = Path(".env")) -> None:
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        key, value = parse_dotenv_line(line)
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+def parse_dotenv_line(line: str) -> tuple[str | None, str]:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#") or "=" not in stripped:
+        return None, ""
+
+    key, value = stripped.split("=", 1)
+    key = key.strip()
+    if not key or not key.replace("_", "").isalnum() or key[0].isdigit():
+        return None, ""
+
+    return key, parse_dotenv_value(value.strip())
+
+
+def parse_dotenv_value(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+
+    value_without_comment = value.split(" #", 1)[0]
+    return value_without_comment.strip()

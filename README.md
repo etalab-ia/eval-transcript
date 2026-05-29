@@ -21,11 +21,10 @@ uv sync
 uv run eval-transcript --help
 ```
 
-The CLI reads API configuration from process environment variables or explicit `--base-url` / `--api-key` flags. It does not load `.env` files automatically. For local development, copy `.env.example` to `.env`, fill in the secrets, then export it before running commands:
+The CLI loads a `.env` file from the current working directory before reading provider configuration. Explicit environment variables already set in the process take precedence, and `--base-url` / `--api-key` flags override both. For local development, copy `.env.example` to `.env` and fill in the secrets:
 
 ```bash
 cp .env.example .env
-set -a; source .env; set +a
 ```
 
 ### oMLX provider
