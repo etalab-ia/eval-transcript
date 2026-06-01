@@ -18,6 +18,12 @@ class NormalizeTranscriptTests(unittest.TestCase):
             "l état c est l été",
         )
 
+    def test_standard_normalization_replaces_symbols_with_spaces(self) -> None:
+        self.assertEqual(
+            normalize_transcript("Coût: 5€ + TVA = 6€"),
+            "coût 5 tva 6",
+        )
+
     def test_raw_normalization_only_normalizes_unicode(self) -> None:
         self.assertEqual(
             normalize_transcript("État, été", NormalizationMode.RAW),
@@ -63,6 +69,15 @@ class ScoreTranscriptPairTests(unittest.TestCase):
 
 
 class AggregateScoreTests(unittest.TestCase):
+    def test_aggregate_wer_preserves_empty_reference_insertion_count(self) -> None:
+        score = score_transcript_pair("", "hallucinated words here")
+
+        aggregate = aggregate_scores([score])
+
+        self.assertEqual(score.wer, 3.0)
+        self.assertEqual(aggregate.wer, score.wer)
+        self.assertEqual(aggregate.counts.insertions, 3)
+
     def test_aggregate_wer_uses_total_counts_not_mean_sample_wer(self) -> None:
         short_bad = score_transcript_pair("oui", "non")
         long_good = score_transcript_pair("un deux trois quatre cinq", "un deux trois quatre cinq")

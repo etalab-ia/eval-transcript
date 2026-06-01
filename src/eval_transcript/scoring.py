@@ -129,7 +129,7 @@ def aggregate_scores(scores: list[TranscriptScore]) -> AggregateScore:
         insertions=sum(score.counts.insertions for score in scores),
     )
     reference_tokens = counts.reference_tokens
-    wer = counts.errors / reference_tokens if reference_tokens else float(counts.insertions > 0)
+    wer = counts.errors / reference_tokens if reference_tokens else float(counts.insertions)
     return AggregateScore(wer=wer, counts=counts, sample_count=len(scores))
 
 
@@ -147,7 +147,7 @@ def normalize_transcript(text: str, mode: NormalizationMode | str = Normalizatio
 
     text = text.casefold()
     text = text.translate(APOSTROPHE_TRANSLATION)
-    text = "".join(" " if is_punctuation(character) else character for character in text)
+    text = "".join(" " if is_scoring_separator(character) else character for character in text)
     return " ".join(text.split())
 
 
@@ -177,8 +177,13 @@ def normalization_mode(value: NormalizationMode | str) -> NormalizationMode:
         raise ValueError(f"Unsupported normalization mode: {value}; expected one of {valid_modes}") from exc
 
 
-def is_punctuation(character: str) -> bool:
-    return unicodedata.category(character).startswith("P")
+def is_scoring_separator(character: str) -> bool:
+    if character not in _SCORING_SEPARATOR_CACHE:
+        _SCORING_SEPARATOR_CACHE[character] = unicodedata.category(character).startswith(("P", "S"))
+    return _SCORING_SEPARATOR_CACHE[character]
+
+
+_SCORING_SEPARATOR_CACHE: dict[str, bool] = {}
 
 
 APOSTROPHE_TRANSLATION = str.maketrans(
