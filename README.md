@@ -97,22 +97,25 @@ The transcribe command prints text only by default. Use `--json` to print the ra
 
 ### Scaleway provider
 
-Scaleway Generative APIs expose Voxtral through an OpenAI-compatible chat completions endpoint. Set `SCW_SECRET_KEY` for inference, plus `SCW_ACCESS_KEY`, `SCW_DEFAULT_ORGANIZATION_ID`, `SCW_DEFAULT_PROJECT_ID`, and optionally `SCW_DEFAULT_REGION` for model discovery through the Scaleway SDK. The CLI derives the project-scoped Generative APIs URL from `SCW_DEFAULT_PROJECT_ID`.
+Scaleway Generative APIs expose Voxtral through an OpenAI-compatible chat completions endpoint. Set `SCW_SECRET_KEY` and `SCW_DEFAULT_PROJECT_ID`; the CLI derives the project-scoped Generative APIs URL from `SCW_DEFAULT_PROJECT_ID`.
 
-List Voxtral models available through Scaleway Managed Inference:
+List Voxtral models available through Scaleway Generative APIs:
 
 ```bash
 uv run eval-transcript scaleway models
 ```
 
+The `models` command queries the same Generative APIs endpoint used for transcription, so every listed ID can be passed directly to `--model`.
+
 Transcribe one local MP3 or WAV file through Voxtral:
 
 ```bash
 uv run eval-transcript scaleway transcribe data/audio/sample.mp3 \
-  --model voxtral-small-24b-2507
+  --model voxtral-small-24b-2507 \
+  --language fr
 ```
 
-The transcribe command prints text only by default. Use `--json` to print the raw chat completion response, or `--save` to write `data/transcriptions/<audio-stem>/scaleway__<model>.txt`.
+Voxtral follows the language of its prompt, so the CLI sends a French prompt that explicitly forbids translation. Use `--language` to pin a different target language (it shapes the prompt), or `--prompt` to override the prompt entirely. The transcribe command prints text only by default. Use `--json` to print the raw chat completion response, or `--save` to write `data/transcriptions/<audio-stem>/scaleway__<model>.txt`.
 
 ## Data layout
 
@@ -133,3 +136,5 @@ uv run eval-transcript manifest sync
 ```
 
 `data/manifest.md` uses Markdown with YAML frontmatter to index samples, source-truth paths, generated outputs, and placeholder metadata such as language, duration, domain, runtime, and real-time factor.
+
+Source-of-truth transcripts are matched to a sample by basename and may be either `.txt` or `.md` (for example `data/source_truth/sample.txt` for `data/audio/sample.wav`).
