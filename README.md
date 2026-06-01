@@ -132,4 +132,22 @@ Generate or refresh the global benchmark manifest after adding local data files:
 uv run eval-transcript manifest sync
 ```
 
+### Scoring transcripts
+
+Score generated transcripts against source truth with the jiwer-backed scoring engine:
+
+```bash
+uv run eval-transcript score all
+```
+
+Score all generated outputs for one sample:
+
+```bash
+uv run eval-transcript score sample sample
+```
+
+The scorer matches `data/source_truth/<sample-id>.md` with `data/transcriptions/<sample-id>/*.txt` and reports WER, CER, substitution/deletion/insertion counts, and the reference token count. Aggregate WER is computed from total edit counts across all scored transcripts, not by averaging per-transcript WER values.
+
+Use `--json` for machine-readable output, or `--normalization raw` to score exact text after Unicode normalization only. The default `standard` normalization is conservative for French: it normalizes Unicode, casing, apostrophe variants, punctuation/symbols, and whitespace while preserving accents.
+
 `data/manifest.md` uses Markdown with YAML frontmatter to index samples, source-truth paths, generated outputs, and placeholder metadata such as language, duration, domain, runtime, and real-time factor.
