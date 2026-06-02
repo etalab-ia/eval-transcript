@@ -11,6 +11,7 @@ Initial scope:
   - Whisper via WhisperX
   - Voxtral
   - Parakeet
+  - Scribe v2
 
 ## Getting started
 
@@ -101,6 +102,28 @@ uv run eval-transcript omlx transcribe data/audio/sample.wav \
   --model parakeet-tdt-0.6b-v3 \
   --language fr
 ```
+
+### ElevenLabs provider
+
+Set `ELEVENLABS_API_KEY` to use ElevenLabs Speech to Text with Scribe v2. The optional `ELEVENLABS_BASE_URL` can point to a regional ElevenLabs API base URL if needed.
+
+List documented ElevenLabs speech-to-text models:
+
+```bash
+uv run eval-transcript elevenlabs models
+```
+
+Transcribe one audio or video file through Scribe v2:
+
+```bash
+uv run eval-transcript elevenlabs transcribe data/audio/sample.wav \
+  --model scribe_v2 \
+  --language fr
+```
+
+ElevenLabs accepts either ISO-639-1 or ISO-639-3 language hints, so `--language fr` and `--language fra` are both valid French hints. The transcribe command prints text only by default. Use `--json` to print the serialized SDK response with metadata such as words and timestamps, or `--save` to write `data/transcriptions/<audio-stem>/elevenlabs__<model>.txt`.
+
+Optional Scribe v2 controls include `--timestamps-granularity none|word|character`, `--diarize`, `--num-speakers`, `--temperature`, `--seed`, `--no-verbatim`, and `--no-tag-audio-events`.
 
 ### Albert API provider
 
