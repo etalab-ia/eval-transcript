@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from eval_transcript.manifest import (
     DEFAULT_SOURCE_TRUTH_DIR,
@@ -25,6 +27,9 @@ class ScoredTranscript:
     source_truth_path: Path
     transcription_path: Path
     score: TranscriptScore
+
+
+ScoreOutputFormat = Literal["text", "json", "markdown", "csv"]
 
 
 class ScoringError(RuntimeError):
@@ -168,6 +173,33 @@ def counts_to_dict(score: TranscriptScore) -> dict[str, int]:
     }
 
 
+def render_scores_output(
+    scored: list[ScoredTranscript],
+    *,
+    output_format: ScoreOutputFormat = "text",
+    show_alignment: bool = False,
+    top_errors: int = 10,
+) -> str:
+    if output_format == "json":
+        return render_scores_json(scored)
+    if output_format == "markdown":
+        return render_scores_markdown(scored, show_alignment=show_alignment, top_errors=top_errors)
+    if output_format == "csv":
+        return render_scores_csv(scored)
+    return render_scores_text(scored, show_alignment=show_alignment, top_errors=top_errors)
+
+
+def write_or_print_score_output(content: str, *, output_path: Path | None = None) -> None:
+    if output_path is None:
+        print(content)
+        return
+    if output_path.is_dir():
+        raise ScoringError(f"Output path must be a file, not a directory: {output_path}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(content + "\n", encoding="utf-8")
+    print(output_path)
+
+
 def render_scores_text(scored: list[ScoredTranscript], *, show_alignment: bool = False, top_errors: int = 10) -> str:
     aggregate = aggregate_scores([item.score for item in scored])
     lines = [
@@ -307,6 +339,106 @@ def operation_columns(operation: AlignmentOperation) -> list[tuple[str, str, str
 
 def operation_label(reference: tuple[str, ...], hypothesis: tuple[str, ...]) -> str:
     return f"{' '.join(reference) or '*'} → {' '.join(hypothesis) or '*'}"
+
+
+def render_scores_markdown(scored: list[ScoredTranscript], *, show_alignment: bool = False, top_errors: int = 10) -> str:
+    aggregate = aggregate_scores([item.score for item in scored])
+    lines = [
+        "# Transcript scoring report",
+        "",
+        "## Aggregate",
+        "",
+        "| WER | S | D | I | N |",
+        "| --- | ---: | ---: | ---: | ---: |",
+        (
+            f"| {format_rate(aggregate.wer)} | {aggregate.counts.substitutions} | "
+            f"{aggregate.counts.deletions} | {aggregate.counts.insertions} | {aggregate.counts.reference_tokens} |"
+        ),
+        "",
+        "## Transcripts",
+        "",
+        "| Sample | Provider | Model | WER | CER | S | D | I | N |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for item in scored:
+        score = item.score
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    markdown_cell(item.sample_id),
+                    markdown_cell(item.provider),
+                    markdown_cell(item.model),
+                    format_rate(score.wer),
+                    format_rate(score.cer),
+                    str(score.counts.substitutions),
+                    str(score.counts.deletions),
+                    str(score.counts.insertions),
+                    str(score.counts.reference_tokens),
+                ]
+            )
+            + " |"
+        )
+
+    if top_errors > 0:
+        lines.extend(["", "## Top errors", "", "```text", render_error_summary(scored, top_errors=top_errors), "```"])
+    if show_alignment:
+        lines.extend(["", "## Alignments", "", "```text", render_alignment_blocks(scored), "```"])
+    return "\n".join(lines)
+
+
+def render_scores_csv(scored: list[ScoredTranscript]) -> str:
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=[
+            "sample_id",
+            "provider",
+            "model",
+            "source_truth_path",
+            "transcription_path",
+            "wer",
+            "cer",
+            "mer",
+            "wil",
+            "wip",
+            "hits",
+            "substitutions",
+            "deletions",
+            "insertions",
+            "reference_tokens",
+            "errors",
+        ],
+        lineterminator="\n",
+    )
+    writer.writeheader()
+    for item in scored:
+        score = item.score
+        writer.writerow(
+            {
+                "sample_id": item.sample_id,
+                "provider": item.provider,
+                "model": item.model,
+                "source_truth_path": item.source_truth_path.as_posix(),
+                "transcription_path": item.transcription_path.as_posix(),
+                "wer": score.wer,
+                "cer": score.cer,
+                "mer": score.mer,
+                "wil": score.wil,
+                "wip": score.wip,
+                "hits": score.counts.hits,
+                "substitutions": score.counts.substitutions,
+                "deletions": score.counts.deletions,
+                "insertions": score.counts.insertions,
+                "reference_tokens": score.counts.reference_tokens,
+                "errors": score.counts.errors,
+            }
+        )
+    return output.getvalue().rstrip("\r\n")
+
+
+def markdown_cell(value: str) -> str:
+    return value.replace("|", "\\|")
 
 
 def render_scores_json(scored: list[ScoredTranscript]) -> str:

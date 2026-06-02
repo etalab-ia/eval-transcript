@@ -147,7 +147,6 @@ class ScoreCliTests(unittest.TestCase):
         self.assertEqual(len(scored), 1)
         self.assertEqual(scored[0].sample_id, "complete")
 
-
     def test_render_scores_text_includes_top_errors(self) -> None:
         from tempfile import TemporaryDirectory
 
@@ -250,6 +249,93 @@ class ScoreCliTests(unittest.TestCase):
         self.assertIn("HYP:", rendered)
         self.assertIn("ERR:", rendered)
         self.assertIn("S", rendered)
+
+    def test_render_scores_markdown_includes_tables_and_diagnostics(self) -> None:
+        from tempfile import TemporaryDirectory
+
+        from eval_transcript.scoring_cli import render_scores_markdown, score_sample_outputs
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_truth_dir = root / "source_truth"
+            sample_dir = root / "transcriptions" / "sample-a"
+            source_truth_dir.mkdir()
+            sample_dir.mkdir(parents=True)
+            (source_truth_dir / "sample-a.md").write_text("bonjour le monde", encoding="utf-8")
+            (sample_dir / "omlx__model.txt").write_text("bonjour beau monde", encoding="utf-8")
+
+            rendered = render_scores_markdown(
+                score_sample_outputs(
+                    "sample-a",
+                    source_truth_dir=source_truth_dir,
+                    transcriptions_dir=root / "transcriptions",
+                ),
+                show_alignment=True,
+                top_errors=5,
+            )
+
+        self.assertIn("# Transcript scoring report", rendered)
+        self.assertIn("| Sample | Provider | Model | WER | CER | S | D | I | N |", rendered)
+        self.assertIn("## Top errors", rendered)
+        self.assertIn("le → beau  1", rendered)
+        self.assertIn("## Alignments", rendered)
+        self.assertIn("REF:", rendered)
+
+    def test_render_scores_csv_outputs_one_row_per_transcript(self) -> None:
+        import csv
+        import io
+        from tempfile import TemporaryDirectory
+
+        from eval_transcript.scoring_cli import render_scores_csv, score_sample_outputs
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_truth_dir = root / "source_truth"
+            sample_dir = root / "transcriptions" / "sample-a"
+            source_truth_dir.mkdir()
+            sample_dir.mkdir(parents=True)
+            (source_truth_dir / "sample-a.md").write_text("oui", encoding="utf-8")
+            (sample_dir / "omlx__model.txt").write_text("non", encoding="utf-8")
+
+            rendered = render_scores_csv(
+                score_sample_outputs(
+                    "sample-a",
+                    source_truth_dir=source_truth_dir,
+                    transcriptions_dir=root / "transcriptions",
+                )
+            )
+
+        self.assertNotIn("\r", rendered)
+        rows = list(csv.DictReader(io.StringIO(rendered)))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["sample_id"], "sample-a")
+        self.assertEqual(rows[0]["provider"], "omlx")
+        self.assertEqual(rows[0]["substitutions"], "1")
+
+    def test_write_or_print_score_output_rejects_directory_paths(self) -> None:
+        from tempfile import TemporaryDirectory
+
+        from eval_transcript.scoring_cli import ScoringError, write_or_print_score_output
+
+        with TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ScoringError, "must be a file"):
+                write_or_print_score_output("content", output_path=Path(tmp))
+
+    def test_write_or_print_score_output_writes_file_and_prints_path(self) -> None:
+        import contextlib
+        import io
+        from tempfile import TemporaryDirectory
+
+        from eval_transcript.scoring_cli import write_or_print_score_output
+
+        with TemporaryDirectory() as tmp:
+            output_path = Path(tmp) / "reports" / "score.md"
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                write_or_print_score_output("content", output_path=output_path)
+
+            self.assertEqual(output_path.read_text(encoding="utf-8"), "content\n")
+            self.assertEqual(stdout.getvalue().strip(), str(output_path))
 
     def test_render_scores_json_includes_aggregate_and_transcripts(self) -> None:
         import json
