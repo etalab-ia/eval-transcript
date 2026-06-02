@@ -97,7 +97,7 @@ The transcribe command prints text only by default. Use `--json` to print the ra
 
 ### Scaleway provider
 
-Scaleway Generative APIs expose Voxtral through an OpenAI-compatible chat completions endpoint. Set `SCW_SECRET_KEY` and `SCW_DEFAULT_PROJECT_ID`; the CLI derives the project-scoped Generative APIs URL from `SCW_DEFAULT_PROJECT_ID`.
+Scaleway Generative APIs expose Voxtral through an OpenAI-compatible chat completions endpoint. Set `SCW_SECRET_KEY` and `SCW_DEFAULT_PROJECT_ID`; the CLI derives the project-scoped Generative APIs URL from `SCW_DEFAULT_PROJECT_ID`. Both `scaleway models` and `scaleway transcribe` also accept `--api-key` and `--project-id` to override these without a `.env` (useful in a worktree or CI).
 
 List Voxtral models available through Scaleway Generative APIs:
 
@@ -149,7 +149,7 @@ Score all generated outputs for one sample:
 uv run eval-transcript score sample sample
 ```
 
-The scorer matches `data/source_truth/<sample-id>.md` with `data/transcriptions/<sample-id>/*.txt` and reports WER, CER, substitution/deletion/insertion counts, and the reference token count. Aggregate WER is computed from total edit counts across all scored transcripts, not by averaging per-transcript WER values.
+The scorer matches `data/source_truth/<sample-id>.md` (or `.txt`) with `data/transcriptions/<sample-id>/*.txt` and reports WER, CER, substitution/deletion/insertion counts, and the reference token count. Aggregate WER is computed from total edit counts across all scored transcripts, not by averaging per-transcript WER values.
 
 Use `--json` for machine-readable output, or `--normalization raw` to score exact text after Unicode normalization only. The default `standard` normalization is conservative for French: it normalizes Unicode, casing, apostrophe variants, punctuation/symbols, and whitespace while preserving accents.
 

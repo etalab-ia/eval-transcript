@@ -34,6 +34,7 @@ def build_prompt(language: str | None) -> str:
     translation instead of a verbatim transcription. The default prompt is in French and
     explicitly forbids translation; passing a language hint pins the target language.
     """
+    language = language.strip() if language else ""
     if not language:
         return DEFAULT_PROMPT
     name = LANGUAGE_NAMES.get(language.lower(), language)
@@ -79,8 +80,8 @@ class ScalewayClient:
         models = data.get("data")
         if not isinstance(models, list):
             return []
-        ids = [model.get("id", "") for model in models if isinstance(model, dict)]
-        ids = [model_id for model_id in ids if model_id]
+        ids = [model.get("id") for model in models if isinstance(model, dict)]
+        ids = [model_id for model_id in ids if isinstance(model_id, str) and model_id]
         if name:
             needle = name.lower()
             ids = [model_id for model_id in ids if needle in model_id.lower()]

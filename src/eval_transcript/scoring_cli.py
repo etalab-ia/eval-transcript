@@ -11,6 +11,7 @@ from typing import Any, Literal
 from eval_transcript.manifest import (
     DEFAULT_SOURCE_TRUTH_DIR,
     DEFAULT_TRANSCRIPTIONS_DIR,
+    SOURCE_TRUTH_SUFFIXES,
     discover_sample_ids,
     find_output_paths,
     find_source_truth_path,
@@ -70,7 +71,8 @@ def score_sample_outputs(
 ) -> list[ScoredTranscript]:
     source_truth_path = find_source_truth_path(source_truth_dir, sample_id)
     if source_truth_path is None:
-        raise ScoringError(f"Missing source truth for sample {sample_id}: expected {source_truth_dir / f'{sample_id}.md'}")
+        expected = " or ".join((source_truth_dir / f"{sample_id}{suffix}").as_posix() for suffix in SOURCE_TRUTH_SUFFIXES)
+        raise ScoringError(f"Missing source truth for sample {sample_id}: expected {expected}")
 
     output_paths = find_output_paths(transcriptions_dir, sample_id)
     if not output_paths:

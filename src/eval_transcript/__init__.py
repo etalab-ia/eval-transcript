@@ -90,6 +90,8 @@ def main() -> None:
     scaleway_subparsers = scaleway.add_subparsers(dest="scaleway_command")
     scaleway_models = scaleway_subparsers.add_parser("models", help="List Scaleway Generative APIs models")
     scaleway_models.add_argument("--name", default="voxtral", help="Optional model name filter")
+    scaleway_models.add_argument("--api-key", default=None, help="Scaleway secret key; defaults to $SCW_SECRET_KEY")
+    scaleway_models.add_argument("--project-id", default=None, help="Scaleway project ID; defaults to $SCW_DEFAULT_PROJECT_ID")
     scaleway_transcribe = scaleway_subparsers.add_parser("transcribe", help="Transcribe one audio file through Scaleway Voxtral")
     scaleway_transcribe.add_argument("audio", type=Path, help="Audio file to transcribe (.mp3 or .wav)")
     scaleway_transcribe.add_argument("--model", default=SCALEWAY_DEFAULT_MODEL, help="Scaleway model ID to use")
@@ -99,6 +101,7 @@ def main() -> None:
     scaleway_transcribe.add_argument("--max-tokens", type=int, default=2048, help="Maximum output tokens")
     scaleway_transcribe.add_argument("--top-p", type=float, default=0.95, help="Nucleus sampling value")
     scaleway_transcribe.add_argument("--api-key", default=None, help="Scaleway secret key; defaults to $SCW_SECRET_KEY")
+    scaleway_transcribe.add_argument("--project-id", default=None, help="Scaleway project ID; defaults to $SCW_DEFAULT_PROJECT_ID")
     scaleway_transcribe.add_argument("--json", action="store_true", help="Print the raw chat completion JSON response")
     scaleway_transcribe.add_argument("--save", action="store_true", help="Write text output to data/transcriptions/<audio-stem>/scaleway__<model>.txt")
     scaleway_transcribe.add_argument("--output-dir", type=Path, default=None, help="Directory for saved text output; defaults to data/transcriptions and implies --save")
@@ -200,13 +203,13 @@ def main() -> None:
             return
 
         if args.command == "scaleway" and args.scaleway_command == "models":
-            client = ScalewayClient()
+            client = ScalewayClient(secret_key=args.api_key, project_id=args.project_id)
             for model_id in client.list_models(name=args.name):
                 print(model_id)
             return
 
         if args.command == "scaleway" and args.scaleway_command == "transcribe":
-            client = ScalewayClient(secret_key=args.api_key)
+            client = ScalewayClient(secret_key=args.api_key, project_id=args.project_id)
             prompt = args.prompt if args.prompt is not None else scaleway_build_prompt(args.language)
             result = client.transcribe(audio_path=args.audio, model=args.model, prompt=prompt, temperature=args.temperature, max_tokens=args.max_tokens, top_p=args.top_p)
             text = scaleway_transcription_text(result)

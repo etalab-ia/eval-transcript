@@ -10,7 +10,8 @@ DEFAULT_AUDIO_DIR = Path("data/audio")
 DEFAULT_SOURCE_TRUTH_DIR = Path("data/source_truth")
 DEFAULT_TRANSCRIPTIONS_DIR = Path("data/transcriptions")
 AUDIO_SUFFIXES = {".aac", ".aiff", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".webm"}
-SOURCE_TRUTH_SUFFIXES = {".txt", ".md"}
+# Ordered by priority: a sample with both extensions resolves to the first match.
+SOURCE_TRUTH_SUFFIXES = (".md", ".txt")
 
 
 @dataclass(frozen=True)
@@ -59,7 +60,7 @@ def find_audio_path(audio_dir: Path, sample_id: str) -> Path:
 
 
 def find_source_truth_path(source_truth_dir: Path, sample_id: str) -> Path | None:
-    for suffix in sorted(SOURCE_TRUTH_SUFFIXES):
+    for suffix in SOURCE_TRUTH_SUFFIXES:
         path = source_truth_dir / f"{sample_id}{suffix}"
         if path.is_file():
             return path
