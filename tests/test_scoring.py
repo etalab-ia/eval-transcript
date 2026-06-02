@@ -172,6 +172,39 @@ class ScoreCliTests(unittest.TestCase):
         self.assertEqual(len(scored), 1)
         self.assertEqual(scored[0].sample_id, "complete")
 
+    def test_grouped_scores_aggregates_by_provider_and_model(self) -> None:
+        from tempfile import TemporaryDirectory
+
+        from eval_transcript.scoring_cli import grouped_scores, score_all_outputs
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_truth_dir = root / "source_truth"
+            transcriptions_dir = root / "transcriptions"
+            source_truth_dir.mkdir()
+            for sample_id, reference in {"sample-a": "un deux", "sample-b": "un deux trois"}.items():
+                (source_truth_dir / f"{sample_id}.md").write_text(reference, encoding="utf-8")
+                sample_dir = transcriptions_dir / sample_id
+                sample_dir.mkdir(parents=True)
+                (sample_dir / "omlx__model-a.txt").write_text(reference, encoding="utf-8")
+            (transcriptions_dir / "sample-a" / "albert__model-b.txt").write_text("un", encoding="utf-8")
+
+            groups = grouped_scores(
+                score_all_outputs(
+                    source_truth_dir=source_truth_dir,
+                    transcriptions_dir=transcriptions_dir,
+                )
+            )
+
+        self.assertEqual([(group.provider, group.model) for group in groups], [("albert", "model-b"), ("omlx", "model-a")])
+        self.assertEqual(groups[0].sample_count, 1)
+        self.assertEqual(groups[0].transcript_count, 1)
+        self.assertEqual(groups[0].aggregate.counts.reference_tokens, 2)
+        self.assertEqual(groups[0].aggregate.counts.errors, 1)
+        self.assertEqual(groups[1].sample_count, 2)
+        self.assertEqual(groups[1].transcript_count, 2)
+        self.assertEqual(groups[1].aggregate.counts.errors, 0)
+
     def test_render_scores_text_includes_top_errors(self) -> None:
         from tempfile import TemporaryDirectory
 
@@ -195,6 +228,8 @@ class ScoreCliTests(unittest.TestCase):
                 top_errors=5,
             )
 
+        self.assertIn("by provider/model", rendered)
+        self.assertIn("provider\tmodel\twer\tS\tD\tI\tN\tsamples\ttranscripts", rendered)
         self.assertIn("top errors", rendered)
         self.assertIn("substitutions:", rendered)
         self.assertIn("le → beau  1", rendered)
@@ -300,6 +335,8 @@ class ScoreCliTests(unittest.TestCase):
             )
 
         self.assertIn("# Transcript scoring report", rendered)
+        self.assertIn("## By provider/model", rendered)
+        self.assertIn("| Provider | Model | WER | S | D | I | N | Samples | Transcripts |", rendered)
         self.assertIn("| Sample | Provider | Model | WER | CER | S | D | I | N |", rendered)
         self.assertIn("## Top errors", rendered)
         self.assertIn("le → beau  1", rendered)
@@ -389,6 +426,9 @@ class ScoreCliTests(unittest.TestCase):
         data = json.loads(rendered)
         self.assertEqual(data["aggregate"]["sample_count"], 1)
         self.assertEqual(data["aggregate"]["transcript_count"], 2)
+        self.assertEqual([(group["provider"], group["model"]) for group in data["groups"]], [("albert", "model"), ("omlx", "model")])
+        self.assertEqual(data["groups"][0]["sample_count"], 1)
+        self.assertEqual(data["groups"][0]["transcript_count"], 1)
         self.assertEqual([item["sample_id"] for item in data["transcripts"]], ["sample-a", "sample-a"])
         self.assertEqual(data["transcripts"][1]["counts"]["substitutions"], 1)
 
