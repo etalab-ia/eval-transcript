@@ -30,21 +30,13 @@ class ScoringError(RuntimeError):
     """Raised when transcript scoring inputs cannot be discovered or read."""
 
 
-def score_sample_outputs(
-    sample_id: str,
+def score_output_paths(
     *,
-    source_truth_dir: Path = DEFAULT_SOURCE_TRUTH_DIR,
-    transcriptions_dir: Path = DEFAULT_TRANSCRIPTIONS_DIR,
+    sample_id: str,
+    source_truth_path: Path,
+    output_paths: list[Path],
     normalization: NormalizationMode | str = NormalizationMode.STANDARD,
 ) -> list[ScoredTranscript]:
-    source_truth_path = find_source_truth_path(source_truth_dir, sample_id)
-    if source_truth_path is None:
-        raise ScoringError(f"Missing source truth for sample {sample_id}: expected {source_truth_dir / f'{sample_id}.md'}")
-
-    output_paths = find_output_paths(transcriptions_dir, sample_id)
-    if not output_paths:
-        raise ScoringError(f"No transcription outputs found for sample {sample_id}: expected {transcriptions_dir / sample_id}/*.txt")
-
     reference = source_truth_path.read_text(encoding="utf-8")
     scored: list[ScoredTranscript] = []
     for transcription_path in output_paths:
@@ -63,6 +55,29 @@ def score_sample_outputs(
     return scored
 
 
+def score_sample_outputs(
+    sample_id: str,
+    *,
+    source_truth_dir: Path = DEFAULT_SOURCE_TRUTH_DIR,
+    transcriptions_dir: Path = DEFAULT_TRANSCRIPTIONS_DIR,
+    normalization: NormalizationMode | str = NormalizationMode.STANDARD,
+) -> list[ScoredTranscript]:
+    source_truth_path = find_source_truth_path(source_truth_dir, sample_id)
+    if source_truth_path is None:
+        raise ScoringError(f"Missing source truth for sample {sample_id}: expected {source_truth_dir / f'{sample_id}.md'}")
+
+    output_paths = find_output_paths(transcriptions_dir, sample_id)
+    if not output_paths:
+        raise ScoringError(f"No transcription outputs found for sample {sample_id}: expected {transcriptions_dir / sample_id}/*.txt")
+
+    return score_output_paths(
+        sample_id=sample_id,
+        source_truth_path=source_truth_path,
+        output_paths=output_paths,
+        normalization=normalization,
+    )
+
+
 def score_all_outputs(
     *,
     source_truth_dir: Path = DEFAULT_SOURCE_TRUTH_DIR,
@@ -72,15 +87,17 @@ def score_all_outputs(
     sample_ids = discover_sample_ids(audio_dir=Path("__missing_audio_dir__"), source_truth_dir=source_truth_dir, transcriptions_dir=transcriptions_dir)
     scored: list[ScoredTranscript] = []
     for sample_id in sample_ids:
-        if find_source_truth_path(source_truth_dir, sample_id) is None:
+        source_truth_path = find_source_truth_path(source_truth_dir, sample_id)
+        if source_truth_path is None:
             continue
-        if not find_output_paths(transcriptions_dir, sample_id):
+        output_paths = find_output_paths(transcriptions_dir, sample_id)
+        if not output_paths:
             continue
         scored.extend(
-            score_sample_outputs(
-                sample_id,
-                source_truth_dir=source_truth_dir,
-                transcriptions_dir=transcriptions_dir,
+            score_output_paths(
+                sample_id=sample_id,
+                source_truth_path=source_truth_path,
+                output_paths=output_paths,
                 normalization=normalization,
             )
         )
@@ -95,7 +112,11 @@ def scored_transcripts_to_dict(scored: list[ScoredTranscript]) -> dict[str, Any]
     aggregate = aggregate_scores([item.score for item in scored])
     return {
         "normalization": scored[0].score.normalization.value if scored else NormalizationMode.STANDARD.value,
-        "aggregate": aggregate_to_dict(aggregate),
+        "aggregate": aggregate_to_dict(
+            aggregate,
+            sample_count=len({item.sample_id for item in scored}),
+            transcript_count=len(scored),
+        ),
         "transcripts": [scored_transcript_to_dict(item) for item in scored],
     }
 
@@ -119,10 +140,11 @@ def scored_transcript_to_dict(item: ScoredTranscript) -> dict[str, Any]:
     }
 
 
-def aggregate_to_dict(aggregate: AggregateScore) -> dict[str, Any]:
+def aggregate_to_dict(aggregate: AggregateScore, *, sample_count: int, transcript_count: int) -> dict[str, Any]:
     return {
         "wer": aggregate.wer,
-        "sample_count": aggregate.sample_count,
+        "sample_count": sample_count,
+        "transcript_count": transcript_count,
         "counts": {
             "hits": aggregate.counts.hits,
             "substitutions": aggregate.counts.substitutions,

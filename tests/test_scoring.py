@@ -161,6 +161,7 @@ class ScoreCliTests(unittest.TestCase):
             sample_dir.mkdir(parents=True)
             (source_truth_dir / "sample-a.md").write_text("oui", encoding="utf-8")
             (sample_dir / "omlx__model.txt").write_text("non", encoding="utf-8")
+            (sample_dir / "albert__model.txt").write_text("oui", encoding="utf-8")
 
             rendered = render_scores_json(
                 score_sample_outputs(
@@ -172,8 +173,9 @@ class ScoreCliTests(unittest.TestCase):
 
         data = json.loads(rendered)
         self.assertEqual(data["aggregate"]["sample_count"], 1)
-        self.assertEqual(data["transcripts"][0]["sample_id"], "sample-a")
-        self.assertEqual(data["transcripts"][0]["counts"]["substitutions"], 1)
+        self.assertEqual(data["aggregate"]["transcript_count"], 2)
+        self.assertEqual([item["sample_id"] for item in data["transcripts"]], ["sample-a", "sample-a"])
+        self.assertEqual(data["transcripts"][1]["counts"]["substitutions"], 1)
 
 
 if __name__ == "__main__":
