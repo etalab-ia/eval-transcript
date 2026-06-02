@@ -81,8 +81,10 @@ class HelpersTests(unittest.TestCase):
         self.assertEqual(ScalewayClient(secret_key="s", project_id="p", timeout=600.0).timeout, 600.0)
 
     def test_non_positive_timeout_is_rejected(self) -> None:
+        from eval_transcript.scaleway import ScalewayError
+
         for bad in (0, -5):
-            with self.assertRaisesRegex(ValueError, "timeout must be positive"):
+            with self.assertRaisesRegex(ScalewayError, "timeout must be positive"):
                 ScalewayClient(secret_key="s", project_id="p", timeout=bad)
 
 
