@@ -135,6 +135,28 @@ Generate or refresh the global benchmark manifest after adding local data files:
 uv run eval-transcript manifest sync
 ```
 
+### Scoring transcripts
+
+Score generated transcripts against source truth with the jiwer-backed scoring engine:
+
+```bash
+uv run eval-transcript score all
+```
+
+Score all generated outputs for one sample:
+
+```bash
+uv run eval-transcript score sample sample
+```
+
+The scorer matches `data/source_truth/<sample-id>.md` with `data/transcriptions/<sample-id>/*.txt` and reports WER, CER, substitution/deletion/insertion counts, and the reference token count. Aggregate WER is computed from total edit counts across all scored transcripts, not by averaging per-transcript WER values.
+
+Use `--json` for machine-readable output, or `--normalization raw` to score exact text after Unicode normalization only. The default `standard` normalization is conservative for French: it normalizes Unicode, casing, apostrophe variants, punctuation/symbols, and whitespace while preserving accents.
+
+Text output includes top substitutions, insertions, and deletions by default. Use `--top-errors 0` to hide these summaries, or `--align` to append normalized `REF` / `HYP` / `ERR` alignment blocks for each scored transcript.
+
+Use `--format markdown` or `--format csv` for report-friendly output, and `--output PATH` to write the rendered scoring report to a file. `--json` remains available as a shortcut for `--format json`.
+
 `data/manifest.md` uses Markdown with YAML frontmatter to index samples, source-truth paths, generated outputs, and placeholder metadata such as language, duration, domain, runtime, and real-time factor.
 
 Source-of-truth transcripts are matched to a sample by basename and may be either `.txt` or `.md` (for example `data/source_truth/sample.txt` for `data/audio/sample.wav`).

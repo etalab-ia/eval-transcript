@@ -29,6 +29,16 @@ from eval_transcript.scaleway import (
     build_prompt as scaleway_build_prompt,
     transcription_text as scaleway_transcription_text,
 )
+from eval_transcript.scoring import NormalizationMode
+from eval_transcript.scoring_cli import (
+    DEFAULT_SOURCE_TRUTH_DIR as SCORING_DEFAULT_SOURCE_TRUTH_DIR,
+    DEFAULT_TRANSCRIPTIONS_DIR as SCORING_DEFAULT_TRANSCRIPTIONS_DIR,
+    ScoringError,
+    render_scores_output,
+    score_all_outputs,
+    score_sample_outputs,
+    write_or_print_score_output,
+)
 from eval_transcript.transcriptions import TranscriptionOutput, print_transcription_output, transcription_text
 
 
@@ -42,6 +52,22 @@ def main() -> None:
     manifest_subparsers = manifest.add_subparsers(dest="manifest_command")
     manifest_sync = manifest_subparsers.add_parser("sync", help="Write data/manifest.md from current benchmark files")
     manifest_sync.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST_PATH, help="Manifest path to write")
+
+    score_parent = argparse.ArgumentParser(add_help=False)
+    score_parent.add_argument("--source-truth-dir", type=Path, default=SCORING_DEFAULT_SOURCE_TRUTH_DIR, help="Directory containing source truth .md files")
+    score_parent.add_argument("--transcriptions-dir", type=Path, default=SCORING_DEFAULT_TRANSCRIPTIONS_DIR, help="Directory containing generated transcript outputs")
+    score_parent.add_argument("--normalization", choices=[mode.value for mode in NormalizationMode], default=NormalizationMode.STANDARD.value, help="Normalization mode used before scoring")
+    score_parent.add_argument("--json", action="store_true", help="Print machine-readable scoring JSON")
+    score_parent.add_argument("--format", choices=["text", "json", "markdown", "csv"], default="text", help="Output format; --json is a shortcut for --format json")
+    score_parent.add_argument("--output", type=Path, default=None, help="Write scoring output to this path instead of stdout")
+    score_parent.add_argument("--align", action="store_true", help="Show normalized REF/HYP/ERR alignment blocks in text output")
+    score_parent.add_argument("--top-errors", type=int, default=10, help="Number of top substitutions, insertions, and deletions to show in text output; use 0 to hide")
+
+    score = subparsers.add_parser("score", help="Score generated transcripts against source truth")
+    score_subparsers = score.add_subparsers(dest="score_command")
+    score_sample = score_subparsers.add_parser("sample", parents=[score_parent], help="Score all generated transcripts for one sample")
+    score_sample.add_argument("sample_id", help="Sample ID matching data/source_truth/<sample-id>.md")
+    score_subparsers.add_parser("all", parents=[score_parent], help="Score all source truth/generated transcript pairs")
 
     albert = subparsers.add_parser("albert", help="Interact with Albert API")
     albert_subparsers = albert.add_subparsers(dest="albert_command")
@@ -111,6 +137,41 @@ def main() -> None:
             args.manifest.parent.mkdir(parents=True, exist_ok=True)
             args.manifest.write_text(manifest_text, encoding="utf-8")
             print(args.manifest)
+            return
+
+        if args.command == "score" and args.score_command == "sample":
+            scored = score_sample_outputs(
+                args.sample_id,
+                source_truth_dir=args.source_truth_dir,
+                transcriptions_dir=args.transcriptions_dir,
+                normalization=args.normalization,
+            )
+            write_or_print_score_output(
+                render_scores_output(
+                    scored,
+                    output_format="json" if args.json else args.format,
+                    show_alignment=args.align,
+                    top_errors=args.top_errors,
+                ),
+                output_path=args.output,
+            )
+            return
+
+        if args.command == "score" and args.score_command == "all":
+            scored = score_all_outputs(
+                source_truth_dir=args.source_truth_dir,
+                transcriptions_dir=args.transcriptions_dir,
+                normalization=args.normalization,
+            )
+            write_or_print_score_output(
+                render_scores_output(
+                    scored,
+                    output_format="json" if args.json else args.format,
+                    show_alignment=args.align,
+                    top_errors=args.top_errors,
+                ),
+                output_path=args.output,
+            )
             return
 
         if args.command == "albert" and args.albert_command == "models":
@@ -205,12 +266,14 @@ def main() -> None:
                 )
             )
             return
-    except (FileNotFoundError, AlbertError, ScalewayError, HuggingFaceError, OmlxError, httpx.HTTPError) as exc:
+    except (FileNotFoundError, ScoringError, AlbertError, ScalewayError, HuggingFaceError, OmlxError, httpx.HTTPError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
     if args.command == "manifest":
         manifest.print_help()
+    elif args.command == "score":
+        score.print_help()
     elif args.command == "albert":
         albert.print_help()
     elif args.command == "scaleway":
