@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from eval_transcript.scoring import (
     AlignmentOperation,
@@ -90,6 +91,91 @@ class AggregateScoreTests(unittest.TestCase):
         self.assertEqual(aggregate.sample_count, 2)
         self.assertEqual(aggregate.counts.reference_tokens, 6)
         self.assertEqual(aggregate.counts.errors, 1)
+
+
+class ScoreCliTests(unittest.TestCase):
+    def test_score_sample_outputs_scores_each_transcript(self) -> None:
+        from tempfile import TemporaryDirectory
+
+        from eval_transcript.scoring_cli import score_sample_outputs
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_truth_dir = root / "source_truth"
+            transcriptions_dir = root / "transcriptions"
+            sample_dir = transcriptions_dir / "sample-a"
+            source_truth_dir.mkdir()
+            sample_dir.mkdir(parents=True)
+            (source_truth_dir / "sample-a.md").write_text("bonjour le monde", encoding="utf-8")
+            (sample_dir / "omlx__parakeet.txt").write_text("bonjour monde", encoding="utf-8")
+            (sample_dir / "albert__whisper.txt").write_text("bonjour le monde", encoding="utf-8")
+
+            scored = score_sample_outputs(
+                "sample-a",
+                source_truth_dir=source_truth_dir,
+                transcriptions_dir=transcriptions_dir,
+            )
+
+        self.assertEqual([item.provider for item in scored], ["albert", "omlx"])
+        self.assertAlmostEqual(scored[0].score.wer, 0.0)
+        self.assertAlmostEqual(scored[1].score.wer, 1 / 3)
+
+    def test_score_all_outputs_skips_incomplete_samples(self) -> None:
+        from tempfile import TemporaryDirectory
+
+        from eval_transcript.scoring_cli import score_all_outputs
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_truth_dir = root / "source_truth"
+            transcriptions_dir = root / "transcriptions"
+            source_truth_dir.mkdir()
+            (source_truth_dir / "complete.md").write_text("un deux", encoding="utf-8")
+            (source_truth_dir / "missing-output.md").write_text("ignored", encoding="utf-8")
+            complete_dir = transcriptions_dir / "complete"
+            orphan_dir = transcriptions_dir / "missing-truth"
+            complete_dir.mkdir(parents=True)
+            orphan_dir.mkdir(parents=True)
+            (complete_dir / "omlx__model.txt").write_text("un deux", encoding="utf-8")
+            (orphan_dir / "omlx__model.txt").write_text("ignored", encoding="utf-8")
+
+            scored = score_all_outputs(
+                source_truth_dir=source_truth_dir,
+                transcriptions_dir=transcriptions_dir,
+            )
+
+        self.assertEqual(len(scored), 1)
+        self.assertEqual(scored[0].sample_id, "complete")
+
+    def test_render_scores_json_includes_aggregate_and_transcripts(self) -> None:
+        import json
+        from tempfile import TemporaryDirectory
+
+        from eval_transcript.scoring_cli import render_scores_json, score_sample_outputs
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_truth_dir = root / "source_truth"
+            sample_dir = root / "transcriptions" / "sample-a"
+            source_truth_dir.mkdir()
+            sample_dir.mkdir(parents=True)
+            (source_truth_dir / "sample-a.md").write_text("oui", encoding="utf-8")
+            (sample_dir / "omlx__model.txt").write_text("non", encoding="utf-8")
+            (sample_dir / "albert__model.txt").write_text("oui", encoding="utf-8")
+
+            rendered = render_scores_json(
+                score_sample_outputs(
+                    "sample-a",
+                    source_truth_dir=source_truth_dir,
+                    transcriptions_dir=root / "transcriptions",
+                )
+            )
+
+        data = json.loads(rendered)
+        self.assertEqual(data["aggregate"]["sample_count"], 1)
+        self.assertEqual(data["aggregate"]["transcript_count"], 2)
+        self.assertEqual([item["sample_id"] for item in data["transcripts"]], ["sample-a", "sample-a"])
+        self.assertEqual(data["transcripts"][1]["counts"]["substitutions"], 1)
 
 
 if __name__ == "__main__":
