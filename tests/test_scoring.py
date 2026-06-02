@@ -147,6 +147,69 @@ class ScoreCliTests(unittest.TestCase):
         self.assertEqual(len(scored), 1)
         self.assertEqual(scored[0].sample_id, "complete")
 
+
+    def test_render_scores_text_includes_top_errors(self) -> None:
+        from tempfile import TemporaryDirectory
+
+        from eval_transcript.scoring_cli import render_scores_text, score_sample_outputs
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_truth_dir = root / "source_truth"
+            sample_dir = root / "transcriptions" / "sample-a"
+            source_truth_dir.mkdir()
+            sample_dir.mkdir(parents=True)
+            (source_truth_dir / "sample-a.md").write_text("bonjour le monde", encoding="utf-8")
+            (sample_dir / "omlx__model.txt").write_text("bonjour beau monde encore", encoding="utf-8")
+
+            rendered = render_scores_text(
+                score_sample_outputs(
+                    "sample-a",
+                    source_truth_dir=source_truth_dir,
+                    transcriptions_dir=root / "transcriptions",
+                ),
+                top_errors=5,
+            )
+
+        self.assertIn("top errors", rendered)
+        self.assertIn("substitutions:", rendered)
+        self.assertIn("le → beau  1", rendered)
+        self.assertIn("insertions:", rendered)
+        self.assertIn("encore  1", rendered)
+        self.assertIn("deletions:", rendered)
+        self.assertIn("(none)", rendered)
+
+    def test_render_scores_text_can_show_alignment_blocks(self) -> None:
+        from tempfile import TemporaryDirectory
+
+        from eval_transcript.scoring_cli import render_scores_text, score_sample_outputs
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_truth_dir = root / "source_truth"
+            sample_dir = root / "transcriptions" / "sample-a"
+            source_truth_dir.mkdir()
+            sample_dir.mkdir(parents=True)
+            (source_truth_dir / "sample-a.md").write_text("bonjour le monde", encoding="utf-8")
+            (sample_dir / "omlx__model.txt").write_text("bonjour beau monde", encoding="utf-8")
+
+            rendered = render_scores_text(
+                score_sample_outputs(
+                    "sample-a",
+                    source_truth_dir=source_truth_dir,
+                    transcriptions_dir=root / "transcriptions",
+                ),
+                show_alignment=True,
+                top_errors=0,
+            )
+
+        self.assertIn("alignments", rendered)
+        self.assertIn("=== sample-a / omlx__model ===", rendered)
+        self.assertIn("REF:", rendered)
+        self.assertIn("HYP:", rendered)
+        self.assertIn("ERR:", rendered)
+        self.assertIn("S", rendered)
+
     def test_render_scores_json_includes_aggregate_and_transcripts(self) -> None:
         import json
         from tempfile import TemporaryDirectory

@@ -58,6 +58,8 @@ def main() -> None:
     score_parent.add_argument("--transcriptions-dir", type=Path, default=SCORING_DEFAULT_TRANSCRIPTIONS_DIR, help="Directory containing generated transcript outputs")
     score_parent.add_argument("--normalization", choices=[mode.value for mode in NormalizationMode], default=NormalizationMode.STANDARD.value, help="Normalization mode used before scoring")
     score_parent.add_argument("--json", action="store_true", help="Print machine-readable scoring JSON")
+    score_parent.add_argument("--align", action="store_true", help="Show normalized REF/HYP/ERR alignment blocks in text output")
+    score_parent.add_argument("--top-errors", type=int, default=10, help="Number of top substitutions, insertions, and deletions to show in text output; use 0 to hide")
 
     score = subparsers.add_parser("score", help="Score generated transcripts against source truth")
     score_subparsers = score.add_subparsers(dest="score_command")
@@ -142,7 +144,7 @@ def main() -> None:
                 transcriptions_dir=args.transcriptions_dir,
                 normalization=args.normalization,
             )
-            print(render_scores_json(scored) if args.json else render_scores_text(scored))
+            print(render_scores_json(scored) if args.json else render_scores_text(scored, show_alignment=args.align, top_errors=args.top_errors))
             return
 
         if args.command == "score" and args.score_command == "all":
@@ -151,7 +153,7 @@ def main() -> None:
                 transcriptions_dir=args.transcriptions_dir,
                 normalization=args.normalization,
             )
-            print(render_scores_json(scored) if args.json else render_scores_text(scored))
+            print(render_scores_json(scored) if args.json else render_scores_text(scored, show_alignment=args.align, top_errors=args.top_errors))
             return
 
         if args.command == "albert" and args.albert_command == "models":

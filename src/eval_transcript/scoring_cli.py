@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -13,7 +14,7 @@ from eval_transcript.manifest import (
     find_source_truth_path,
     parse_output_name,
 )
-from eval_transcript.scoring import AggregateScore, NormalizationMode, TranscriptScore, aggregate_scores, score_transcript_pair
+from eval_transcript.scoring import AlignmentOperation, AggregateScore, NormalizationMode, TranscriptScore, aggregate_scores, score_transcript_pair
 
 
 @dataclass(frozen=True)
@@ -167,15 +168,15 @@ def counts_to_dict(score: TranscriptScore) -> dict[str, int]:
     }
 
 
-def render_scores_text(scored: list[ScoredTranscript]) -> str:
+def render_scores_text(scored: list[ScoredTranscript], *, show_alignment: bool = False, top_errors: int = 10) -> str:
     aggregate = aggregate_scores([item.score for item in scored])
     lines = [
-        "sample\tprovider\tmodel\twer\tcer\tS\tD\tI\tN",
+        "sample	provider	model	wer	cer	S	D	I	N",
     ]
     for item in scored:
         score = item.score
         lines.append(
-            "\t".join(
+            "	".join(
                 [
                     item.sample_id,
                     item.provider,
@@ -202,7 +203,102 @@ def render_scores_text(scored: list[ScoredTranscript]) -> str:
             ),
         ]
     )
+    if top_errors > 0:
+        lines.extend(["", render_error_summary(scored, top_errors=top_errors)])
+    if show_alignment:
+        lines.extend(["", render_alignment_blocks(scored)])
     return "\n".join(lines)
+
+
+def render_error_summary(scored: list[ScoredTranscript], *, top_errors: int = 10) -> str:
+    substitutions: Counter[str] = Counter()
+    insertions: Counter[str] = Counter()
+    deletions: Counter[str] = Counter()
+    for item in scored:
+        for operation in item.score.alignment:
+            if operation.type == "substitute":
+                substitutions[operation_label(operation.reference, operation.hypothesis)] += 1
+            elif operation.type == "insert":
+                for token in operation.hypothesis:
+                    insertions[token] += 1
+            elif operation.type == "delete":
+                for token in operation.reference:
+                    deletions[token] += 1
+
+    lines = ["top errors"]
+    if not substitutions and not insertions and not deletions:
+        lines.append("(no errors)")
+        return "\n".join(lines)
+
+    lines.extend(render_counter_section("substitutions", substitutions, top_errors))
+    lines.extend(render_counter_section("insertions", insertions, top_errors))
+    lines.extend(render_counter_section("deletions", deletions, top_errors))
+    return "\n".join(lines)
+
+
+def render_counter_section(title: str, counter: Counter[str], limit: int) -> list[str]:
+    lines = [title + ":"]
+    if not counter:
+        lines.append("  (none)")
+        return lines
+    for label, count in counter.most_common(limit):
+        lines.append(f"  {label}  {count}")
+    return lines
+
+
+def render_alignment_blocks(scored: list[ScoredTranscript]) -> str:
+    lines = ["alignments"]
+    for item in scored:
+        lines.extend(
+            [
+                "",
+                f"=== {item.sample_id} / {item.provider}__{item.model} ===",
+                render_alignment(item.score.alignment),
+            ]
+        )
+    return "\n".join(lines)
+
+
+def render_alignment(alignment: tuple[AlignmentOperation, ...]) -> str:
+    reference_tokens: list[str] = []
+    hypothesis_tokens: list[str] = []
+    error_tokens: list[str] = []
+    for operation in alignment:
+        for reference_token, hypothesis_token, marker in operation_columns(operation):
+            width = max(len(reference_token), len(hypothesis_token), len(marker), 1)
+            reference_tokens.append(reference_token.ljust(width))
+            hypothesis_tokens.append(hypothesis_token.ljust(width))
+            error_tokens.append(marker.center(width))
+    return "\n".join(
+        [
+            "REF: " + " ".join(reference_tokens).rstrip(),
+            "HYP: " + " ".join(hypothesis_tokens).rstrip(),
+            "ERR: " + " ".join(error_tokens).rstrip(),
+        ]
+    )
+
+
+def operation_columns(operation: AlignmentOperation) -> list[tuple[str, str, str]]:
+    if operation.type == "equal":
+        return [(reference, hypothesis, "") for reference, hypothesis in zip(operation.reference, operation.hypothesis)]
+    if operation.type == "insert":
+        return [("*", hypothesis, "I") for hypothesis in operation.hypothesis]
+    if operation.type == "delete":
+        return [(reference, "*", "D") for reference in operation.reference]
+
+    length = max(len(operation.reference), len(operation.hypothesis), 1)
+    return [
+        (
+            operation.reference[index] if index < len(operation.reference) else "*",
+            operation.hypothesis[index] if index < len(operation.hypothesis) else "*",
+            "S",
+        )
+        for index in range(length)
+    ]
+
+
+def operation_label(reference: tuple[str, ...], hypothesis: tuple[str, ...]) -> str:
+    return f"{' '.join(reference) or '*'} → {' '.join(hypothesis) or '*'}"
 
 
 def render_scores_json(scored: list[ScoredTranscript]) -> str:
