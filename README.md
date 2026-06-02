@@ -179,6 +179,8 @@ The scorer matches `data/source_truth/<sample-id>.md` (or `.txt`) with `data/tra
 
 Use `--json` for machine-readable output, or `--normalization raw` to score exact text after Unicode normalization only. The default `standard` normalization is conservative for French: it normalizes Unicode, casing, apostrophe variants, punctuation/symbols, and whitespace while preserving accents.
 
+Use `--normalization standard_numbers` to additionally fold numbers to a canonical form so spelled-out and digit notations match (`cinq`/`5`, `premier`/`1er`, `deux mille cinq cents`/`2 500`). This avoids penalizing a model only for writing numbers differently than the reference; it is useful on number-heavy material (budgets, statistics).
+
 Text output includes top substitutions, insertions, and deletions by default. Use `--top-errors 0` to hide these summaries, or `--align` to append normalized `REF` / `HYP` / `ERR` alignment blocks for each scored transcript.
 
 Use `--format markdown` or `--format csv` for report-friendly output, and `--output PATH` to write the rendered scoring report to a file. `--json` remains available as a shortcut for `--format json`.

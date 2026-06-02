@@ -35,6 +35,26 @@ class NormalizeTranscriptTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unsupported normalization mode"):
             normalize_transcript("bonjour", "unknown")
 
+    def test_standard_numbers_aligns_spelled_and_digit_cardinals(self) -> None:
+        mode = NormalizationMode.STANDARD_NUMBERS
+        self.assertEqual(
+            normalize_transcript("cinq axes et vingt-cinq mesures", mode),
+            normalize_transcript("5 axes et 25 mesures", mode),
+        )
+
+    def test_standard_numbers_aligns_ordinals_and_thousands(self) -> None:
+        mode = NormalizationMode.STANDARD_NUMBERS
+        self.assertEqual(
+            normalize_transcript("le deuxième pilier, deux mille cinq cents emplois", mode),
+            normalize_transcript("le 2e pilier, 2 500 emplois", mode),
+        )
+
+    def test_standard_numbers_leaves_words_untouched(self) -> None:
+        self.assertEqual(
+            normalize_transcript("bonjour le monde", NormalizationMode.STANDARD_NUMBERS),
+            "bonjour le monde",
+        )
+
 
 class ScoreTranscriptPairTests(unittest.TestCase):
     def test_scores_word_and_character_errors(self) -> None:
