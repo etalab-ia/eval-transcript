@@ -179,6 +179,47 @@ class ScoreCliTests(unittest.TestCase):
         self.assertIn("deletions:", rendered)
         self.assertIn("(none)", rendered)
 
+    def test_render_scores_text_splits_adjacent_substitutions_for_top_errors(self) -> None:
+        from tempfile import TemporaryDirectory
+
+        from eval_transcript.scoring_cli import render_scores_text, score_sample_outputs
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_truth_dir = root / "source_truth"
+            sample_dir = root / "transcriptions" / "sample-a"
+            source_truth_dir.mkdir()
+            sample_dir.mkdir(parents=True)
+            (source_truth_dir / "sample-a.md").write_text("alpha beta", encoding="utf-8")
+            (sample_dir / "omlx__model.txt").write_text("xray yankee", encoding="utf-8")
+
+            rendered = render_scores_text(
+                score_sample_outputs(
+                    "sample-a",
+                    source_truth_dir=source_truth_dir,
+                    transcriptions_dir=root / "transcriptions",
+                ),
+                top_errors=5,
+            )
+
+        self.assertIn("alpha → xray  1", rendered)
+        self.assertIn("beta → yankee  1", rendered)
+        self.assertNotIn("alpha beta → xray yankee", rendered)
+
+    def test_render_alignment_chunks_long_alignments(self) -> None:
+        from eval_transcript.scoring_cli import render_alignment
+
+        score = score_transcript_pair(
+            "un deux trois quatre cinq six sept huit neuf dix onze douze treize",
+            "un deux trois quatre cinq six sept huit neuf dix onze douze treize",
+        )
+
+        rendered = render_alignment(score.alignment, chunk_size=5)
+
+        self.assertEqual(rendered.count("REF:"), 3)
+        self.assertEqual(rendered.count("HYP:"), 3)
+        self.assertEqual(rendered.count("ERR:"), 3)
+
     def test_render_scores_text_can_show_alignment_blocks(self) -> None:
         from tempfile import TemporaryDirectory
 

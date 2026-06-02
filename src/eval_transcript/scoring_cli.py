@@ -171,12 +171,12 @@ def counts_to_dict(score: TranscriptScore) -> dict[str, int]:
 def render_scores_text(scored: list[ScoredTranscript], *, show_alignment: bool = False, top_errors: int = 10) -> str:
     aggregate = aggregate_scores([item.score for item in scored])
     lines = [
-        "sample	provider	model	wer	cer	S	D	I	N",
+        "sample\tprovider\tmodel\twer\tcer\tS\tD\tI\tN",
     ]
     for item in scored:
         score = item.score
         lines.append(
-            "	".join(
+            "\t".join(
                 [
                     item.sample_id,
                     item.provider,
@@ -217,7 +217,9 @@ def render_error_summary(scored: list[ScoredTranscript], *, top_errors: int = 10
     for item in scored:
         for operation in item.score.alignment:
             if operation.type == "substitute":
-                substitutions[operation_label(operation.reference, operation.hypothesis)] += 1
+                for reference_token, hypothesis_token, marker in operation_columns(operation):
+                    if marker == "S":
+                        substitutions[operation_label((reference_token,), (hypothesis_token,))] += 1
             elif operation.type == "insert":
                 for token in operation.hypothesis:
                     insertions[token] += 1
@@ -259,7 +261,7 @@ def render_alignment_blocks(scored: list[ScoredTranscript]) -> str:
     return "\n".join(lines)
 
 
-def render_alignment(alignment: tuple[AlignmentOperation, ...]) -> str:
+def render_alignment(alignment: tuple[AlignmentOperation, ...], *, chunk_size: int = 12) -> str:
     reference_tokens: list[str] = []
     hypothesis_tokens: list[str] = []
     error_tokens: list[str] = []
@@ -269,13 +271,19 @@ def render_alignment(alignment: tuple[AlignmentOperation, ...]) -> str:
             reference_tokens.append(reference_token.ljust(width))
             hypothesis_tokens.append(hypothesis_token.ljust(width))
             error_tokens.append(marker.center(width))
-    return "\n".join(
-        [
-            "REF: " + " ".join(reference_tokens).rstrip(),
-            "HYP: " + " ".join(hypothesis_tokens).rstrip(),
-            "ERR: " + " ".join(error_tokens).rstrip(),
-        ]
-    )
+
+    chunks: list[str] = []
+    for start in range(0, len(reference_tokens), chunk_size):
+        end = start + chunk_size
+        chunks.extend(
+            [
+                "REF: " + " ".join(reference_tokens[start:end]).rstrip(),
+                "HYP: " + " ".join(hypothesis_tokens[start:end]).rstrip(),
+                "ERR: " + " ".join(error_tokens[start:end]).rstrip(),
+                "",
+            ]
+        )
+    return "\n".join(chunks).rstrip()
 
 
 def operation_columns(operation: AlignmentOperation) -> list[tuple[str, str, str]]:
