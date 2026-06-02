@@ -30,11 +30,11 @@ class AlbertClient:
         *,
         base_url: str | None = None,
         api_key: str | None = None,
-        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        timeout: float | None = None,
     ) -> None:
         self.base_url = (base_url or os.getenv("ALBERT_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
         self.api_key = api_key if api_key is not None else os.getenv(DEFAULT_API_KEY_ENV)
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else DEFAULT_TIMEOUT_SECONDS
 
     @property
     def headers(self) -> dict[str, str]:

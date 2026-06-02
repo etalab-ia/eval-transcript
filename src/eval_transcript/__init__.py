@@ -82,6 +82,7 @@ def main() -> None:
     albert_transcribe.add_argument("--temperature", type=float, default=None, help="Optional sampling temperature between 0 and 1")
     albert_transcribe.add_argument("--base-url", default=None, help="Albert API base URL")
     albert_transcribe.add_argument("--api-key", default=None, help=f"Albert API key; defaults to ${ALBERT_API_KEY_ENV}")
+    albert_transcribe.add_argument("--timeout", type=float, default=None, help="HTTP timeout in seconds; raise it for long audio (default: 120)")
     albert_transcribe.add_argument("--json", action="store_true", help="Print the raw transcription JSON response")
     albert_transcribe.add_argument("--save", action="store_true", help="Write text output to data/transcriptions/<audio-stem>/albert__<model>.txt")
     albert_transcribe.add_argument("--output-dir", type=Path, default=None, help="Directory for saved text output; defaults to data/transcriptions and implies --save")
@@ -102,6 +103,7 @@ def main() -> None:
     scaleway_transcribe.add_argument("--top-p", type=float, default=0.95, help="Nucleus sampling value")
     scaleway_transcribe.add_argument("--api-key", default=None, help="Scaleway secret key; defaults to $SCW_SECRET_KEY")
     scaleway_transcribe.add_argument("--project-id", default=None, help="Scaleway project ID; defaults to $SCW_DEFAULT_PROJECT_ID")
+    scaleway_transcribe.add_argument("--timeout", type=float, default=None, help="HTTP timeout in seconds; raise it for long audio (default: 120)")
     scaleway_transcribe.add_argument("--json", action="store_true", help="Print the raw chat completion JSON response")
     scaleway_transcribe.add_argument("--save", action="store_true", help="Write text output to data/transcriptions/<audio-stem>/scaleway__<model>.txt")
     scaleway_transcribe.add_argument("--output-dir", type=Path, default=None, help="Directory for saved text output; defaults to data/transcriptions and implies --save")
@@ -128,6 +130,7 @@ def main() -> None:
     omlx_transcribe.add_argument("--language", default=None, help="Optional language hint, e.g. fr")
     omlx_transcribe.add_argument("--base-url", default=None, help="OpenAI-compatible oMLX base URL")
     omlx_transcribe.add_argument("--api-key", default=None, help=f"oMLX API key; defaults to ${OMLX_API_KEY_ENV}")
+    omlx_transcribe.add_argument("--timeout", type=float, default=None, help="HTTP timeout in seconds; raise it for long audio (default: 120)")
     omlx_transcribe.add_argument("--json", action="store_true", help="Print the raw transcription JSON response")
     omlx_transcribe.add_argument("--save", action="store_true", help="Write text output to data/transcriptions/<audio-stem>/omlx__<model>.txt")
     omlx_transcribe.add_argument("--output-dir", type=Path, default=None, help="Directory for saved text output; defaults to data/transcriptions and implies --save")
@@ -184,7 +187,7 @@ def main() -> None:
             return
 
         if args.command == "albert" and args.albert_command == "transcribe":
-            client = AlbertClient(base_url=args.base_url, api_key=args.api_key)
+            client = AlbertClient(base_url=args.base_url, api_key=args.api_key, timeout=args.timeout)
             response_format = "json" if args.json else None
             result = client.transcribe(model=args.model, audio_path=args.audio, language=args.language, prompt=args.prompt, response_format=response_format, temperature=args.temperature)
             text = transcription_text(result.get("text"))
@@ -209,7 +212,7 @@ def main() -> None:
             return
 
         if args.command == "scaleway" and args.scaleway_command == "transcribe":
-            client = ScalewayClient(secret_key=args.api_key, project_id=args.project_id)
+            client = ScalewayClient(secret_key=args.api_key, project_id=args.project_id, timeout=args.timeout)
             prompt = args.prompt if args.prompt is not None else scaleway_build_prompt(args.language)
             result = client.transcribe(audio_path=args.audio, model=args.model, prompt=prompt, temperature=args.temperature, max_tokens=args.max_tokens, top_p=args.top_p)
             text = scaleway_transcription_text(result)
@@ -252,7 +255,7 @@ def main() -> None:
             return
 
         if args.command == "omlx" and args.omlx_command == "transcribe":
-            client = OmlxClient(base_url=args.base_url, api_key=args.api_key)
+            client = OmlxClient(base_url=args.base_url, api_key=args.api_key, timeout=args.timeout)
             response_format = "verbose_json" if args.json else None
             result = client.transcribe(model=args.model, audio_path=args.audio, language=args.language, response_format=response_format)
             text = transcription_text(result.get("text"))
