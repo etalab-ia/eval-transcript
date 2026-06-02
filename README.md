@@ -11,6 +11,7 @@ Initial scope:
   - Whisper via WhisperX
   - Voxtral
   - Parakeet
+  - Cohere Transcribe
   - Scribe v2
 
 ## Getting started
@@ -71,6 +72,47 @@ uv run eval-transcript omlx transcribe data/audio/sample.wav \
 ```
 
 The transcribe command prints text only by default for quick visual comparison against source-of-truth transcripts. Use `--json` to print the raw response with segment metadata.
+
+For Cohere Transcribe on Apple Silicon, use the original Cohere model with oMLX's `mlx-audio` STT loader:
+
+```text
+CohereLabs/cohere-transcribe-03-2026
+```
+
+A smoke test on oMLX `0.3.12` loaded this model and successfully transcribed short English and French WAV files. oMLX exposes the downloaded model as:
+
+```text
+cohere-transcribe-03-2026
+```
+
+The converted MLX 8-bit candidates are currently not reliable oMLX targets. The `beshkenadze` 8-bit conversion is discovered and loaded, but fails during transcription with a convolution shape mismatch:
+
+```text
+beshkenadze/cohere-transcribe-03-2026-mlx-8bit
+```
+
+The `mlx-community` mirror is useful for `mlx-speech`, but is not currently a drop-in oMLX candidate:
+
+```text
+mlx-community/cohere-transcribe-03-2026-mlx-8bit
+```
+
+It stores its runnable files under `mlx-int8/`, so the current oMLX discovery fails to recognize it as a downloaded model. Moving or symlinking those files to the repository root makes oMLX discover the alias, but a smoke test on oMLX `0.3.12` failed during transcription with the same convolution shape mismatch. Treat it as incompatible with oMLX until the upstream conversion or loader changes.
+
+After downloading a candidate locally and restarting or refreshing oMLX model discovery, check the model alias exposed by the local server:
+
+```bash
+uv run eval-transcript omlx models
+```
+
+Then pass that exact alias to the transcription command. If oMLX exposes the repository name as the alias, the command is:
+
+```bash
+uv run eval-transcript omlx transcribe data/audio/sample.wav \
+  --model cohere-transcribe-03-2026
+```
+
+If oMLX exposes a different alias, use the alias printed by `omlx models` instead. Cohere Transcribe supports French, but on oMLX `0.3.12` the `--language fr` option is currently broken because oMLX maps `fr` to `french` before calling the Cohere loader. Omit `--language` for now; the smoke test transcribed French correctly without a language hint.
 
 To save the text output for later comparison, use `--save`. The file is written to `data/transcriptions/<audio-stem>/omlx__<model>.txt`:
 
