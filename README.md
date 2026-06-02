@@ -12,6 +12,7 @@ Initial scope:
   - Voxtral
   - Parakeet
   - Cohere Transcribe
+  - Scribe v2
 
 ## Getting started
 
@@ -96,7 +97,7 @@ The `mlx-community` mirror is useful for `mlx-speech`, but is not currently a dr
 mlx-community/cohere-transcribe-03-2026-mlx-8bit
 ```
 
-It stores its runnable files under `mlx-int8/`, so the current oMLX discovery skips it as downloaded. Moving or symlinking those files to the repository root makes oMLX discover the alias, but a smoke test on oMLX `0.3.12` failed during transcription with the same convolution shape mismatch. Treat it as incompatible with oMLX until the upstream conversion or loader changes.
+It stores its runnable files under `mlx-int8/`, so the current oMLX discovery fails to recognize it as a downloaded model. Moving or symlinking those files to the repository root makes oMLX discover the alias, but a smoke test on oMLX `0.3.12` failed during transcription with the same convolution shape mismatch. Treat it as incompatible with oMLX until the upstream conversion or loader changes.
 
 After downloading a candidate locally and restarting or refreshing oMLX model discovery, check the model alias exposed by the local server:
 
@@ -111,7 +112,7 @@ uv run eval-transcript omlx transcribe data/audio/sample.wav \
   --model cohere-transcribe-03-2026
 ```
 
-If oMLX exposes a different alias, use the alias printed by `omlx models` instead. Cohere Transcribe supports French, but on oMLX `0.3.12` the `language=fr` form is currently broken because oMLX maps `fr` to `french` before calling the Cohere loader. Omit `--language` for now; the smoke test transcribed French correctly without a language hint.
+If oMLX exposes a different alias, use the alias printed by `omlx models` instead. Cohere Transcribe supports French, but on oMLX `0.3.12` the `--language fr` option is currently broken because oMLX maps `fr` to `french` before calling the Cohere loader. Omit `--language` for now; the smoke test transcribed French correctly without a language hint.
 
 To save the text output for later comparison, use `--save`. The file is written to `data/transcriptions/<audio-stem>/omlx__<model>.txt`:
 
@@ -143,6 +144,28 @@ uv run eval-transcript omlx transcribe data/audio/sample.wav \
   --model parakeet-tdt-0.6b-v3 \
   --language fr
 ```
+
+### ElevenLabs provider
+
+Set `ELEVENLABS_API_KEY` to use ElevenLabs Speech to Text with Scribe v2. The optional `ELEVENLABS_BASE_URL` can point to a regional ElevenLabs API base URL if needed.
+
+List documented ElevenLabs speech-to-text models:
+
+```bash
+uv run eval-transcript elevenlabs models
+```
+
+Transcribe one audio or video file through Scribe v2:
+
+```bash
+uv run eval-transcript elevenlabs transcribe data/audio/sample.wav \
+  --model scribe_v2 \
+  --language fr
+```
+
+ElevenLabs accepts either ISO-639-1 or ISO-639-3 language hints, so `--language fr` and `--language fra` are both valid French hints. The transcribe command prints text only by default. Use `--json` to print the serialized SDK response with metadata such as words and timestamps, or `--save` to write `data/transcriptions/<audio-stem>/elevenlabs__<model>.txt`.
+
+Optional Scribe v2 controls include `--timestamps-granularity none|word|character`, `--diarize`, `--num-speakers`, `--temperature`, `--seed`, `--no-verbatim`, and `--no-tag-audio-events`.
 
 ### Albert API provider
 

@@ -13,6 +13,14 @@ from eval_transcript.albert import (
     AlbertClient,
     AlbertError,
 )
+from eval_transcript.elevenlabs import (
+    DEFAULT_API_KEY_ENV as ELEVENLABS_API_KEY_ENV,
+    DEFAULT_BASE_URL_ENV as ELEVENLABS_BASE_URL_ENV,
+    DEFAULT_MODEL as ELEVENLABS_DEFAULT_MODEL,
+    ElevenLabsClient,
+    ElevenLabsError,
+    elevenlabs_transcription_text,
+)
 from eval_transcript.huggingface import (
     DEFAULT_API_KEY_ENV as HUGGINGFACE_API_KEY_ENV,
     DEFAULT_PARAKEET_MODEL as HUGGINGFACE_DEFAULT_PARAKEET_MODEL,
@@ -116,6 +124,28 @@ def main() -> None:
     huggingface_transcribe.add_argument("--json", action="store_true", help="Print the raw transcription JSON response")
     huggingface_transcribe.add_argument("--save", action="store_true", help="Write text output to data/transcriptions/<audio-stem>/huggingface__<model>.txt")
     huggingface_transcribe.add_argument("--output-dir", type=Path, default=None, help="Directory for saved text output; defaults to data/transcriptions and implies --save")
+
+    elevenlabs = subparsers.add_parser("elevenlabs", help="Interact with ElevenLabs Speech to Text")
+    elevenlabs_subparsers = elevenlabs.add_subparsers(dest="elevenlabs_command")
+    elevenlabs_models = elevenlabs_subparsers.add_parser("models", help="List documented ElevenLabs speech-to-text models")
+    elevenlabs_models.add_argument("--api-key", default=None, help=f"ElevenLabs API key; defaults to ${ELEVENLABS_API_KEY_ENV}")
+    elevenlabs_models.add_argument("--base-url", default=None, help=f"Optional ElevenLabs API base URL; defaults to ${ELEVENLABS_BASE_URL_ENV} if set")
+    elevenlabs_transcribe = elevenlabs_subparsers.add_parser("transcribe", help="Transcribe one audio file through ElevenLabs Speech to Text")
+    elevenlabs_transcribe.add_argument("audio", type=Path, help="Audio or video file to transcribe")
+    elevenlabs_transcribe.add_argument("--model", default=ELEVENLABS_DEFAULT_MODEL, help="ElevenLabs speech-to-text model ID to use")
+    elevenlabs_transcribe.add_argument("--language", default=None, help="Optional language hint, e.g. fr or fra")
+    elevenlabs_transcribe.add_argument("--timestamps-granularity", choices=["none", "word", "character"], default=None, help="Optional timestamp granularity returned by ElevenLabs")
+    elevenlabs_transcribe.add_argument("--diarize", action="store_true", default=None, help="Enable speaker diarization")
+    elevenlabs_transcribe.add_argument("--num-speakers", type=int, default=None, help="Optional maximum speaker count for diarization")
+    elevenlabs_transcribe.add_argument("--no-tag-audio-events", action="store_false", dest="tag_audio_events", default=None, help="Disable audio event tags such as laughter or footsteps")
+    elevenlabs_transcribe.add_argument("--temperature", type=float, default=None, help="Optional transcription temperature between 0.0 and 2.0")
+    elevenlabs_transcribe.add_argument("--seed", type=int, default=None, help="Optional deterministic sampling seed")
+    elevenlabs_transcribe.add_argument("--no-verbatim", action="store_true", default=None, help="Remove filler words, false starts, and disfluencies; only supported with scribe_v2")
+    elevenlabs_transcribe.add_argument("--api-key", default=None, help=f"ElevenLabs API key; defaults to ${ELEVENLABS_API_KEY_ENV}")
+    elevenlabs_transcribe.add_argument("--base-url", default=None, help=f"Optional ElevenLabs API base URL; defaults to ${ELEVENLABS_BASE_URL_ENV} if set")
+    elevenlabs_transcribe.add_argument("--json", action="store_true", help="Print the raw transcription JSON response")
+    elevenlabs_transcribe.add_argument("--save", action="store_true", help="Write text output to data/transcriptions/<audio-stem>/elevenlabs__<model>.txt")
+    elevenlabs_transcribe.add_argument("--output-dir", type=Path, default=None, help="Directory for saved text output; defaults to data/transcriptions and implies --save")
 
     omlx = subparsers.add_parser("omlx", help="Interact with a local oMLX OpenAI-compatible API")
     omlx_subparsers = omlx.add_subparsers(dest="omlx_command")
@@ -245,6 +275,41 @@ def main() -> None:
             )
             return
 
+        if args.command == "elevenlabs" and args.elevenlabs_command == "models":
+            client = ElevenLabsClient(api_key=args.api_key, base_url=args.base_url, require_api_key=False)
+            for model in client.list_models():
+                print(model.id)
+            return
+
+        if args.command == "elevenlabs" and args.elevenlabs_command == "transcribe":
+            client = ElevenLabsClient(api_key=args.api_key, base_url=args.base_url)
+            result = client.transcribe(
+                audio_path=args.audio,
+                model=args.model,
+                language=args.language,
+                tag_audio_events=args.tag_audio_events,
+                num_speakers=args.num_speakers,
+                timestamps_granularity=args.timestamps_granularity,
+                diarize=args.diarize,
+                temperature=args.temperature,
+                seed=args.seed,
+                no_verbatim=args.no_verbatim,
+            )
+            text = elevenlabs_transcription_text(result)
+            print_transcription_output(
+                TranscriptionOutput(
+                    result=result,
+                    text=text,
+                    json_output=args.json,
+                    save=args.save,
+                    output_dir=args.output_dir,
+                    audio_path=args.audio,
+                    provider="elevenlabs",
+                    model=args.model,
+                )
+            )
+            return
+
         if args.command == "omlx" and args.omlx_command == "models":
             client = OmlxClient(base_url=args.base_url, api_key=args.api_key)
             for model in client.list_models():
@@ -269,7 +334,7 @@ def main() -> None:
                 )
             )
             return
-    except (FileNotFoundError, ScoringError, AlbertError, ScalewayError, HuggingFaceError, OmlxError, httpx.HTTPError) as exc:
+    except (FileNotFoundError, ScoringError, AlbertError, ScalewayError, HuggingFaceError, ElevenLabsError, OmlxError, httpx.HTTPError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
@@ -283,8 +348,9 @@ def main() -> None:
         scaleway.print_help()
     elif args.command == "huggingface":
         huggingface.print_help()
+    elif args.command == "elevenlabs":
+        elevenlabs.print_help()
     elif args.command == "omlx":
         omlx.print_help()
     else:
         parser.print_help()
-
