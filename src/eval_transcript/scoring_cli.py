@@ -29,6 +29,15 @@ class ScoredTranscript:
     score: TranscriptScore
 
 
+@dataclass(frozen=True)
+class GroupedScore:
+    provider: str
+    model: str
+    aggregate: AggregateScore
+    sample_count: int
+    transcript_count: int
+
+
 ScoreOutputFormat = Literal["text", "json", "markdown", "csv"]
 
 
@@ -114,6 +123,26 @@ def score_all_outputs(
     return scored
 
 
+def grouped_scores(scored: list[ScoredTranscript]) -> list[GroupedScore]:
+    grouped: dict[tuple[str, str], list[ScoredTranscript]] = {}
+    for item in scored:
+        grouped.setdefault((item.provider, item.model), []).append(item)
+
+    summaries: list[GroupedScore] = []
+    for provider, model in sorted(grouped):
+        items = grouped[(provider, model)]
+        summaries.append(
+            GroupedScore(
+                provider=provider,
+                model=model,
+                aggregate=aggregate_scores([item.score for item in items]),
+                sample_count=len({item.sample_id for item in items}),
+                transcript_count=len(items),
+            )
+        )
+    return summaries
+
+
 def scored_transcripts_to_dict(scored: list[ScoredTranscript]) -> dict[str, Any]:
     aggregate = aggregate_scores([item.score for item in scored])
     return {
@@ -123,7 +152,26 @@ def scored_transcripts_to_dict(scored: list[ScoredTranscript]) -> dict[str, Any]
             sample_count=len({item.sample_id for item in scored}),
             transcript_count=len(scored),
         ),
+        "groups": [grouped_score_to_dict(group) for group in grouped_scores(scored)],
         "transcripts": [scored_transcript_to_dict(item) for item in scored],
+    }
+
+
+def grouped_score_to_dict(group: GroupedScore) -> dict[str, Any]:
+    return {
+        "provider": group.provider,
+        "model": group.model,
+        "wer": group.aggregate.wer,
+        "sample_count": group.sample_count,
+        "transcript_count": group.transcript_count,
+        "counts": {
+            "hits": group.aggregate.counts.hits,
+            "substitutions": group.aggregate.counts.substitutions,
+            "deletions": group.aggregate.counts.deletions,
+            "insertions": group.aggregate.counts.insertions,
+            "reference_tokens": group.aggregate.counts.reference_tokens,
+            "errors": group.aggregate.counts.errors,
+        },
     }
 
 
@@ -235,10 +283,32 @@ def render_scores_text(scored: list[ScoredTranscript], *, show_alignment: bool =
             ),
         ]
     )
+    lines.extend(["", render_grouped_scores_text(grouped_scores(scored))])
     if top_errors > 0:
         lines.extend(["", render_error_summary(scored, top_errors=top_errors)])
     if show_alignment:
         lines.extend(["", render_alignment_blocks(scored)])
+    return "\n".join(lines)
+
+
+def render_grouped_scores_text(groups: list[GroupedScore]) -> str:
+    lines = ["by provider/model", "provider\tmodel\twer\tS\tD\tI\tN\tsamples\ttranscripts"]
+    for group in groups:
+        lines.append(
+            "\t".join(
+                [
+                    group.provider,
+                    group.model,
+                    format_rate(group.aggregate.wer),
+                    str(group.aggregate.counts.substitutions),
+                    str(group.aggregate.counts.deletions),
+                    str(group.aggregate.counts.insertions),
+                    str(group.aggregate.counts.reference_tokens),
+                    str(group.sample_count),
+                    str(group.transcript_count),
+                ]
+            )
+        )
     return "\n".join(lines)
 
 
@@ -355,11 +425,39 @@ def render_scores_markdown(scored: list[ScoredTranscript], *, show_alignment: bo
             f"{aggregate.counts.deletions} | {aggregate.counts.insertions} | {aggregate.counts.reference_tokens} |"
         ),
         "",
-        "## Transcripts",
+        "## By provider/model",
         "",
-        "| Sample | Provider | Model | WER | CER | S | D | I | N |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Provider | Model | WER | S | D | I | N | Samples | Transcripts |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
+    for group in grouped_scores(scored):
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    markdown_cell(group.provider),
+                    markdown_cell(group.model),
+                    format_rate(group.aggregate.wer),
+                    str(group.aggregate.counts.substitutions),
+                    str(group.aggregate.counts.deletions),
+                    str(group.aggregate.counts.insertions),
+                    str(group.aggregate.counts.reference_tokens),
+                    str(group.sample_count),
+                    str(group.transcript_count),
+                ]
+            )
+            + " |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Transcripts",
+            "",
+            "| Sample | Provider | Model | WER | CER | S | D | I | N |",
+            "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
     for item in scored:
         score = item.score
         lines.append(
