@@ -34,10 +34,10 @@ from eval_transcript.scoring_cli import (
     DEFAULT_SOURCE_TRUTH_DIR as SCORING_DEFAULT_SOURCE_TRUTH_DIR,
     DEFAULT_TRANSCRIPTIONS_DIR as SCORING_DEFAULT_TRANSCRIPTIONS_DIR,
     ScoringError,
-    render_scores_json,
-    render_scores_text,
+    render_scores_output,
     score_all_outputs,
     score_sample_outputs,
+    write_or_print_score_output,
 )
 from eval_transcript.transcriptions import TranscriptionOutput, print_transcription_output, transcription_text
 
@@ -58,6 +58,8 @@ def main() -> None:
     score_parent.add_argument("--transcriptions-dir", type=Path, default=SCORING_DEFAULT_TRANSCRIPTIONS_DIR, help="Directory containing generated transcript outputs")
     score_parent.add_argument("--normalization", choices=[mode.value for mode in NormalizationMode], default=NormalizationMode.STANDARD.value, help="Normalization mode used before scoring")
     score_parent.add_argument("--json", action="store_true", help="Print machine-readable scoring JSON")
+    score_parent.add_argument("--format", choices=["text", "json", "markdown", "csv"], default="text", help="Output format; --json is a shortcut for --format json")
+    score_parent.add_argument("--output", type=Path, default=None, help="Write scoring output to this path instead of stdout")
     score_parent.add_argument("--align", action="store_true", help="Show normalized REF/HYP/ERR alignment blocks in text output")
     score_parent.add_argument("--top-errors", type=int, default=10, help="Number of top substitutions, insertions, and deletions to show in text output; use 0 to hide")
 
@@ -144,7 +146,15 @@ def main() -> None:
                 transcriptions_dir=args.transcriptions_dir,
                 normalization=args.normalization,
             )
-            print(render_scores_json(scored) if args.json else render_scores_text(scored, show_alignment=args.align, top_errors=args.top_errors))
+            write_or_print_score_output(
+                render_scores_output(
+                    scored,
+                    output_format="json" if args.json else args.format,
+                    show_alignment=args.align,
+                    top_errors=args.top_errors,
+                ),
+                output_path=args.output,
+            )
             return
 
         if args.command == "score" and args.score_command == "all":
@@ -153,7 +163,15 @@ def main() -> None:
                 transcriptions_dir=args.transcriptions_dir,
                 normalization=args.normalization,
             )
-            print(render_scores_json(scored) if args.json else render_scores_text(scored, show_alignment=args.align, top_errors=args.top_errors))
+            write_or_print_score_output(
+                render_scores_output(
+                    scored,
+                    output_format="json" if args.json else args.format,
+                    show_alignment=args.align,
+                    top_errors=args.top_errors,
+                ),
+                output_path=args.output,
+            )
             return
 
         if args.command == "albert" and args.albert_command == "models":
