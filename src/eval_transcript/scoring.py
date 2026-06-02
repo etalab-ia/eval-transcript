@@ -168,9 +168,12 @@ _ORDINAL_WORDS = {
     "premier": "1", "première": "1", "second": "2", "seconde": "2",
     "deuxième": "2", "troisième": "3", "quatrième": "4", "cinquième": "5",
     "sixième": "6", "septième": "7", "huitième": "8", "neuvième": "9", "dixième": "10",
+    "premiers": "1", "premières": "1", "seconds": "2", "secondes": "2",
+    "deuxièmes": "2", "troisièmes": "3", "quatrièmes": "4", "cinquièmes": "5",
+    "sixièmes": "6", "septièmes": "7", "huitièmes": "8", "neuvièmes": "9", "dixièmes": "10",
 }
-_NUMBER_GAP = re.compile(r"(?<=\d)\s+(?=\d)")
-_ORDINAL_SUFFIX = re.compile(r"(\d+)(?:er|ère|ere|ème|eme|e|nd|nde|es)\b")
+_NUMBER_GAP = re.compile(r"(?<=\d)\s+(?=\d{3}(?!\d))")
+_ORDINAL_SUFFIX = re.compile(r"(\d+)(?:er|ère|ere|re|ème|eme|e|nd|nde|de)s?\b")
 
 
 def _spell_out_to_digits(text: str) -> str:

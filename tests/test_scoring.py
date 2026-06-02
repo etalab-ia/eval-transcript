@@ -48,6 +48,16 @@ class NormalizeTranscriptTests(unittest.TestCase):
             normalize_transcript("le deuxième pilier, deux mille cinq cents emplois", mode),
             normalize_transcript("le 2e pilier, 2 500 emplois", mode),
         )
+        # ordinaux pluriels et abréviations standard
+        self.assertEqual(
+            normalize_transcript("les deuxièmes places, les premières lignes", mode),
+            normalize_transcript("les 2ndes places, les 1res lignes", mode),
+        )
+        # les espaces hors séparateur de milliers ne doivent pas être compactés
+        self.assertEqual(
+            normalize_transcript("page 5 10, entre 15 20 personnes", mode),
+            "page 5 10 entre 15 20 personnes",
+        )
 
     def test_standard_numbers_leaves_words_untouched(self) -> None:
         self.assertEqual(
