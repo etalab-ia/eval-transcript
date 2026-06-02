@@ -21,6 +21,18 @@ uv sync
 uv run eval-transcript --help
 ```
 
+Install the pre-commit hook to scan staged changes for secrets with Gitleaks:
+
+```bash
+uv run pre-commit install
+```
+
+You can also run it manually across the tracked repository:
+
+```bash
+uv run pre-commit run --all-files
+```
+
 The CLI loads a `.env` file from the current working directory before reading provider configuration. Explicit environment variables already set in the process take precedence, and `--base-url` / `--api-key` flags override both. For local development, copy `.env.example` to `.env` and fill in the secrets:
 
 ```bash
