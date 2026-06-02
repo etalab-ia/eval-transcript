@@ -12,9 +12,17 @@ Initial scope:
   - Voxtral
   - Parakeet
 
-## Development
+## Getting started
 
 This project uses [uv](https://docs.astral.sh/uv/) with a Python `src/` layout.
+
+### Prerequisites
+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) for dependency management and command execution.
+- Git for source control and pre-commit hooks.
+- The configured Gitleaks hook is installed by `pre-commit` in its managed environment. A standalone `gitleaks` binary is only needed if you want to run the `gitleaks` CLI directly outside `pre-commit`.
+
+### Development setup
 
 ```bash
 uv sync
