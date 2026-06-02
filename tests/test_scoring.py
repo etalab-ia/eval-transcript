@@ -120,6 +120,31 @@ class ScoreCliTests(unittest.TestCase):
         self.assertAlmostEqual(scored[0].score.wer, 0.0)
         self.assertAlmostEqual(scored[1].score.wer, 1 / 3)
 
+    def test_score_sample_outputs_accepts_txt_source_truth(self) -> None:
+        from tempfile import TemporaryDirectory
+
+        from eval_transcript.scoring_cli import score_sample_outputs
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_truth_dir = root / "source_truth"
+            transcriptions_dir = root / "transcriptions"
+            sample_dir = transcriptions_dir / "sample-a"
+            source_truth_dir.mkdir()
+            sample_dir.mkdir(parents=True)
+            (source_truth_dir / "sample-a.txt").write_text("bonjour le monde", encoding="utf-8")
+            (sample_dir / "omlx__parakeet.txt").write_text("bonjour monde", encoding="utf-8")
+
+            scored = score_sample_outputs(
+                "sample-a",
+                source_truth_dir=source_truth_dir,
+                transcriptions_dir=transcriptions_dir,
+            )
+
+        self.assertEqual(len(scored), 1)
+        self.assertEqual(scored[0].source_truth_path.suffix, ".txt")
+        self.assertAlmostEqual(scored[0].score.wer, 1 / 3)
+
     def test_score_all_outputs_skips_incomplete_samples(self) -> None:
         from tempfile import TemporaryDirectory
 

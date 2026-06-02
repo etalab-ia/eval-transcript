@@ -2,30 +2,46 @@ from __future__ import annotations
 
 import base64
 import os
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import httpx
-from scaleway import Client as ScalewaySdkClient
-from scaleway import ScalewayException
-from scaleway.inference.v1 import InferenceV1API
 
 
 BASE_URL_TEMPLATE = "https://api.scaleway.ai/{project_id}/v1"
-DEFAULT_REGION = "fr-par"
 DEFAULT_TIMEOUT_SECONDS = 120.0
 DEFAULT_MODEL = "voxtral-small-24b-2507"
-DEFAULT_PROMPT = "Transcribe this audio. Return only the transcription text."
+DEFAULT_PROMPT = (
+    "Transcris l'audio mot à mot dans sa langue d'origine, sans le traduire. "
+    "Réponds uniquement avec le texte transcrit, sans commentaire."
+)
 SUPPORTED_AUDIO_FORMATS = {"mp3", "wav"}
+LANGUAGE_NAMES = {
+    "fr": "français",
+    "en": "anglais",
+    "de": "allemand",
+    "es": "espagnol",
+    "it": "italien",
+    "nl": "néerlandais",
+    "pt": "portugais",
+}
 
 
-@dataclass(frozen=True)
-class ScalewayModel:
-    id: str
-    name: str
-    status: str
-    region: str
+def build_prompt(language: str | None) -> str:
+    """Build a transcription prompt that prevents Voxtral from translating the audio.
+
+    Voxtral follows the language of the prompt, so an English prompt yields an English
+    translation instead of a verbatim transcription. The default prompt is in French and
+    explicitly forbids translation; passing a language hint pins the target language.
+    """
+    language = language.strip() if language else ""
+    if not language:
+        return DEFAULT_PROMPT
+    name = LANGUAGE_NAMES.get(language.lower(), language)
+    return (
+        f"Transcris l'audio mot à mot en {name}, sans le traduire. "
+        "Réponds uniquement avec le texte transcrit, sans commentaire."
+    )
 
 
 class ScalewayClient:
@@ -34,21 +50,13 @@ class ScalewayClient:
     def __init__(
         self,
         *,
-        access_key: str | None = None,
         secret_key: str | None = None,
-        organization_id: str | None = None,
         project_id: str | None = None,
-        region: str | None = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
-        self.access_key = access_key if access_key is not None else os.getenv("SCW_ACCESS_KEY")
         self.secret_key = secret_key if secret_key is not None else os.getenv("SCW_SECRET_KEY")
-        self.organization_id = (
-            organization_id if organization_id is not None else os.getenv("SCW_DEFAULT_ORGANIZATION_ID")
-        )
         self.project_id = project_id if project_id is not None else os.getenv("SCW_DEFAULT_PROJECT_ID")
         self.base_url = generative_api_base_url(self.project_id)
-        self.region = region or os.getenv("SCW_DEFAULT_REGION") or DEFAULT_REGION
         self.timeout = timeout
 
     @property
@@ -57,23 +65,27 @@ class ScalewayClient:
             return {}
         return {"Authorization": f"Bearer {self.secret_key}"}
 
-    def list_models(self, *, name: str | None = None) -> list[ScalewayModel]:
-        sdk_client = ScalewaySdkClient(
-            access_key=self.access_key,
-            secret_key=self.secret_key,
-            default_organization_id=self.organization_id,
-            default_project_id=self.project_id,
-            default_region=self.region,
-        )
-        api = InferenceV1API(sdk_client)
-        try:
-            models = api.list_models_all(region=self.region, name=name)
-        except ScalewayException as exc:
-            raise ScalewayError(f"Scaleway SDK request failed: {exc}") from exc
-        return [
-            ScalewayModel(id=model.id, name=model.name, status=str(model.status), region=str(model.region))
-            for model in models
-        ]
+    def list_models(self, *, name: str | None = None) -> list[str]:
+        """List Generative APIs model IDs usable by ``transcribe``.
+
+        Queries the same OpenAI-compatible endpoint as transcription, so the returned IDs
+        match exactly what ``--model`` expects. Only ``SCW_SECRET_KEY`` and
+        ``SCW_DEFAULT_PROJECT_ID`` are required.
+        """
+        if not self.secret_key:
+            raise ScalewayError("SCW_SECRET_KEY is required to list Scaleway models")
+        if not self.project_id:
+            raise ScalewayError("SCW_DEFAULT_PROJECT_ID is required to list Scaleway models")
+        data = self._request_json("GET", "/models")
+        models = data.get("data")
+        if not isinstance(models, list):
+            return []
+        ids = [model.get("id") for model in models if isinstance(model, dict)]
+        ids = [model_id for model_id in ids if isinstance(model_id, str) and model_id]
+        if name:
+            needle = name.lower()
+            ids = [model_id for model_id in ids if needle in model_id.lower()]
+        return sorted(ids)
 
     def transcribe(
         self,

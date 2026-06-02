@@ -10,6 +10,8 @@ DEFAULT_AUDIO_DIR = Path("data/audio")
 DEFAULT_SOURCE_TRUTH_DIR = Path("data/source_truth")
 DEFAULT_TRANSCRIPTIONS_DIR = Path("data/transcriptions")
 AUDIO_SUFFIXES = {".aac", ".aiff", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".webm"}
+# Ordered by priority: a sample with both extensions resolves to the first match.
+SOURCE_TRUTH_SUFFIXES = (".md", ".txt")
 
 
 @dataclass(frozen=True)
@@ -43,7 +45,7 @@ def discover_sample_ids(*, audio_dir: Path, source_truth_dir: Path, transcriptio
     if audio_dir.is_dir():
         sample_ids.update(path.stem for path in audio_dir.iterdir() if path.is_file() and path.suffix.lower() in AUDIO_SUFFIXES)
     if source_truth_dir.is_dir():
-        sample_ids.update(path.stem for path in source_truth_dir.iterdir() if path.is_file() and path.suffix.lower() == ".md")
+        sample_ids.update(path.stem for path in source_truth_dir.iterdir() if path.is_file() and path.suffix.lower() in SOURCE_TRUTH_SUFFIXES)
     if transcriptions_dir.is_dir():
         sample_ids.update(path.name for path in transcriptions_dir.iterdir() if path.is_dir())
     return sorted(sample_ids)
@@ -58,8 +60,11 @@ def find_audio_path(audio_dir: Path, sample_id: str) -> Path:
 
 
 def find_source_truth_path(source_truth_dir: Path, sample_id: str) -> Path | None:
-    path = source_truth_dir / f"{sample_id}.md"
-    return path if path.is_file() else None
+    for suffix in SOURCE_TRUTH_SUFFIXES:
+        path = source_truth_dir / f"{sample_id}{suffix}"
+        if path.is_file():
+            return path
+    return None
 
 
 def find_output_paths(transcriptions_dir: Path, sample_id: str) -> list[Path]:

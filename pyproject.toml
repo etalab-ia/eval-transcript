@@ -12,7 +12,6 @@ dependencies = [
     "huggingface-hub>=1.16.1",
     "jiwer>=4.0.0",
     "python-dotenv>=1.2.2",
-    "scaleway>=2.11.0",
 ]
 
 [project.scripts]
