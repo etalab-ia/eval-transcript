@@ -29,6 +29,11 @@ class DummyPydanticResponse:
         return {"text": "bonjour", "words": [DummyWord("bonjour", 0.0)], "mode": mode}
 
 
+class NonCallableDumpAttributes:
+    model_dump = "not callable"
+    dict = "not callable"
+
+
 class FakeSpeechToText:
     def __init__(self, response: object) -> None:
         self.response = response
@@ -94,6 +99,14 @@ class ElevenLabsClientTests(unittest.TestCase):
         response = {"words": [DummyWord("bonjour", 0.0)]}
 
         self.assertEqual(serializable_response(response), {"words": [{"text": "bonjour", "start": 0.0}]})
+
+    def test_serializable_response_ignores_non_callable_dump_attributes(self) -> None:
+        value = NonCallableDumpAttributes()
+
+        self.assertIs(serializable_response(value), value)
+
+    def test_serializable_response_converts_sets_to_lists(self) -> None:
+        self.assertEqual(sorted(serializable_response({"values": {"a", "b"}})["values"]), ["a", "b"])
 
     def test_api_errors_are_summarized_without_headers(self) -> None:
         error = ApiError(

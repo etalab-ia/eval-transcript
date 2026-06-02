@@ -110,16 +110,18 @@ class ElevenLabsError(RuntimeError):
 def serializable_response(value: Any) -> Any:
     if dataclasses.is_dataclass(value):
         return serializable_response(dataclasses.asdict(value))
-    if hasattr(value, "model_dump"):
+    model_dump_attr = getattr(value, "model_dump", None)
+    if callable(model_dump_attr):
         try:
-            return serializable_response(value.model_dump(mode="json"))
+            return serializable_response(model_dump_attr(mode="json"))
         except TypeError:
-            return serializable_response(value.model_dump())
-    if hasattr(value, "dict"):
-        return serializable_response(value.dict())
+            return serializable_response(model_dump_attr())
+    dict_attr = getattr(value, "dict", None)
+    if callable(dict_attr):
+        return serializable_response(dict_attr())
     if isinstance(value, dict):
         return {str(key): serializable_response(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, (list, tuple, set)):
         return [serializable_response(item) for item in value]
     return value
 
