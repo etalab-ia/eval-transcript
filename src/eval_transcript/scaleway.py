@@ -58,6 +58,8 @@ class ScalewayClient:
         self.project_id = project_id if project_id is not None else os.getenv("SCW_DEFAULT_PROJECT_ID")
         self.base_url = generative_api_base_url(self.project_id)
         self.timeout = timeout if timeout is not None else DEFAULT_TIMEOUT_SECONDS
+        if self.timeout <= 0:
+            raise ValueError(f"timeout must be positive, got {self.timeout}")
 
     @property
     def headers(self) -> dict[str, str]:

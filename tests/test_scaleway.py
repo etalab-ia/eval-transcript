@@ -80,6 +80,11 @@ class HelpersTests(unittest.TestCase):
     def test_timeout_override_is_honored(self) -> None:
         self.assertEqual(ScalewayClient(secret_key="s", project_id="p", timeout=600.0).timeout, 600.0)
 
+    def test_non_positive_timeout_is_rejected(self) -> None:
+        for bad in (0, -5):
+            with self.assertRaisesRegex(ValueError, "timeout must be positive"):
+                ScalewayClient(secret_key="s", project_id="p", timeout=bad)
+
 
 if __name__ == "__main__":
     unittest.main()
