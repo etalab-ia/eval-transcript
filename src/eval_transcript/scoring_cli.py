@@ -193,6 +193,8 @@ def write_or_print_score_output(content: str, *, output_path: Path | None = None
     if output_path is None:
         print(content)
         return
+    if output_path.is_dir():
+        raise ScoringError(f"Output path must be a file, not a directory: {output_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(content + "\n", encoding="utf-8")
     print(output_path)
@@ -407,6 +409,7 @@ def render_scores_csv(scored: list[ScoredTranscript]) -> str:
             "reference_tokens",
             "errors",
         ],
+        lineterminator="\n",
     )
     writer.writeheader()
     for item in scored:

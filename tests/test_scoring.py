@@ -305,11 +305,21 @@ class ScoreCliTests(unittest.TestCase):
                 )
             )
 
+        self.assertNotIn("\r", rendered)
         rows = list(csv.DictReader(io.StringIO(rendered)))
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["sample_id"], "sample-a")
         self.assertEqual(rows[0]["provider"], "omlx")
         self.assertEqual(rows[0]["substitutions"], "1")
+
+    def test_write_or_print_score_output_rejects_directory_paths(self) -> None:
+        from tempfile import TemporaryDirectory
+
+        from eval_transcript.scoring_cli import ScoringError, write_or_print_score_output
+
+        with TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ScoringError, "must be a file"):
+                write_or_print_score_output("content", output_path=Path(tmp))
 
     def test_write_or_print_score_output_writes_file_and_prints_path(self) -> None:
         import contextlib
