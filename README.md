@@ -12,13 +12,39 @@ Initial scope:
   - Voxtral
   - Parakeet
 
-## Development
+## Getting started
 
 This project uses [uv](https://docs.astral.sh/uv/) with a Python `src/` layout.
+
+### Prerequisites
+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) for dependency management and command execution.
+- Git for source control and pre-commit hooks.
+- The configured Gitleaks hook is installed by `pre-commit` in its managed environment. A standalone `gitleaks` binary is only needed if you want to run full repository scans or use the `gitleaks` CLI directly outside `pre-commit`.
+
+### Development setup
 
 ```bash
 uv sync
 uv run eval-transcript --help
+```
+
+Install the pre-commit hook to scan staged changes for secrets with Gitleaks:
+
+```bash
+uv run pre-commit install
+```
+
+You can also run the staged-changes secret scan manually:
+
+```bash
+uv run pre-commit run gitleaks
+```
+
+To scan the existing repository contents and history, install the standalone Gitleaks binary and run a direct repository scan:
+
+```bash
+gitleaks git --redact --verbose
 ```
 
 The CLI loads a `.env` file from the current working directory before reading provider configuration. Explicit environment variables already set in the process take precedence, and `--base-url` / `--api-key` flags override both. For local development, copy `.env.example` to `.env` and fill in the secrets:
