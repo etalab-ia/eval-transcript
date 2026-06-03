@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
@@ -13,6 +14,7 @@ class NormalizationMode(StrEnum):
 
     RAW = "raw"
     STANDARD = "standard"
+    STANDARD_NUMBERS = "standard_numbers"
 
 
 OperationType = Literal["equal", "substitute", "delete", "insert"]
@@ -145,10 +147,52 @@ def normalize_transcript(text: str, mode: NormalizationMode | str = Normalizatio
     if resolved_mode is NormalizationMode.RAW:
         return text
 
+    if resolved_mode is NormalizationMode.STANDARD_NUMBERS:
+        # Convert spelled-out cardinals to digits so that e.g. "cinq" and "5"
+        # match. Done before casefolding/punctuation stripping because the
+        # converter relies on word boundaries.
+        text = _spell_out_to_digits(text)
+
     text = text.casefold()
     text = text.translate(APOSTROPHE_TRANSLATION)
     text = "".join(" " if is_scoring_separator(character) else character for character in text)
-    return " ".join(text.split())
+    text = " ".join(text.split())
+
+    if resolved_mode is NormalizationMode.STANDARD_NUMBERS:
+        text = _canonicalize_numbers(text)
+    return text
+
+
+# French spelled-out ordinals that text2num does not map to a bare digit.
+_ORDINAL_WORDS = {
+    "premier": "1", "première": "1", "second": "2", "seconde": "2",
+    "deuxième": "2", "troisième": "3", "quatrième": "4", "cinquième": "5",
+    "sixième": "6", "septième": "7", "huitième": "8", "neuvième": "9", "dixième": "10",
+    "premiers": "1", "premières": "1", "seconds": "2", "secondes": "2",
+    "deuxièmes": "2", "troisièmes": "3", "quatrièmes": "4", "cinquièmes": "5",
+    "sixièmes": "6", "septièmes": "7", "huitièmes": "8", "neuvièmes": "9", "dixièmes": "10",
+}
+_NUMBER_GAP = re.compile(r"(?<=\d)\s+(?=\d{3}(?!\d))")
+_ORDINAL_SUFFIX = re.compile(r"(\d+)(?:er|ère|ere|re|ème|eme|e|nd|nde|de)s?\b")
+
+
+def _spell_out_to_digits(text: str) -> str:
+    """Convert spelled-out French cardinals to digits (e.g. "vingt-cinq" -> "25")."""
+    from text_to_num import alpha2digit
+
+    return alpha2digit(text, "fr")
+
+
+def _canonicalize_numbers(text: str) -> str:
+    """Collapse digit formatting so numeric values compare equal regardless of spelling.
+
+    Runs on already standardized (lowercased, de-punctuated) text: strips the digit-group
+    spaces left by "2 500", reduces ordinal markers ("5eme" -> "5"), and maps the few
+    spelled-out ordinals text2num leaves untouched ("deuxième" -> "2").
+    """
+    text = _NUMBER_GAP.sub("", text)
+    text = _ORDINAL_SUFFIX.sub(r"\1", text)
+    return " ".join(_ORDINAL_WORDS.get(word, word) for word in text.split())
 
 
 def alignment_operations(word_output: Any) -> tuple[AlignmentOperation, ...]:
