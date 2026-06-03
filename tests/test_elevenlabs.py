@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import os
+import sys
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -10,6 +13,7 @@ from unittest.mock import patch
 from elevenlabs.core import ApiError
 
 from eval_transcript.elevenlabs import (
+    DEFAULT_TIMEOUT_SECONDS,
     ElevenLabsClient,
     ElevenLabsError,
     elevenlabs_error_detail,
@@ -49,11 +53,37 @@ class FakeSdkClient:
         self.speech_to_text = FakeSpeechToText(response)
 
 
+class FakeCliElevenLabsClient:
+    constructor_calls: list[dict[str, object]] = []
+
+    def __init__(self, **kwargs: object) -> None:
+        self.constructor_calls.append(kwargs)
+
+    def transcribe(self, **kwargs: object) -> dict[str, object]:
+        return {"text": "bonjour"}
+
+
 class ElevenLabsClientTests(unittest.TestCase):
     def test_constructor_requires_api_key(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(ElevenLabsError, "ELEVENLABS_API_KEY"):
                 ElevenLabsClient()
+
+    def test_timeout_defaults_when_none(self) -> None:
+        self.assertEqual(ElevenLabsClient(api_key="test-key", timeout=None).timeout, DEFAULT_TIMEOUT_SECONDS)
+
+    def test_timeout_override_is_honored(self) -> None:
+        self.assertEqual(ElevenLabsClient(api_key="test-key", timeout=900.0).timeout, 900.0)
+
+    def test_non_positive_timeout_is_rejected(self) -> None:
+        for bad in (0, -5):
+            with self.assertRaisesRegex(ElevenLabsError, "timeout must be positive"):
+                ElevenLabsClient(api_key="test-key", timeout=bad)
+
+    def test_non_finite_timeout_is_rejected(self) -> None:
+        for bad in (float("nan"), float("inf")):
+            with self.assertRaisesRegex(ElevenLabsError, "timeout must be positive"):
+                ElevenLabsClient(api_key="test-key", timeout=bad)
 
     def test_transcribe_passes_scribe_parameters_and_serializes_response(self) -> None:
         fake_client = FakeSdkClient(DummyPydanticResponse())
@@ -115,6 +145,54 @@ class ElevenLabsClientTests(unittest.TestCase):
         )
 
         self.assertEqual(elevenlabs_error_detail(error), "status 401 - Free Tier access has been disabled.")
+
+
+class ElevenLabsCliTests(unittest.TestCase):
+    def setUp(self) -> None:
+        FakeCliElevenLabsClient.constructor_calls = []
+
+    def test_transcribe_passes_timeout_to_client(self) -> None:
+        from eval_transcript import main
+
+        stdout = StringIO()
+        argv = [
+            "eval-transcript",
+            "elevenlabs",
+            "transcribe",
+            "sample.wav",
+            "--api-key",
+            "test-key",
+            "--timeout",
+            "900",
+        ]
+
+        with patch.object(sys, "argv", argv), patch("eval_transcript.ElevenLabsClient", FakeCliElevenLabsClient), redirect_stdout(stdout):
+            main()
+
+        self.assertEqual(stdout.getvalue(), "bonjour\n")
+        self.assertEqual(FakeCliElevenLabsClient.constructor_calls[0]["timeout"], 900.0)
+
+    def test_invalid_transcribe_timeout_exits_cleanly(self) -> None:
+        from eval_transcript import main
+
+        stderr = StringIO()
+        argv = [
+            "eval-transcript",
+            "elevenlabs",
+            "transcribe",
+            "sample.wav",
+            "--api-key",
+            "test-key",
+            "--timeout",
+            "0",
+        ]
+
+        with patch.object(sys, "argv", argv), redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as raised:
+                main()
+
+        self.assertEqual(raised.exception.code, 1)
+        self.assertIn("Error: timeout must be positive", stderr.getvalue())
 
 
 if __name__ == "__main__":
