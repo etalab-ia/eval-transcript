@@ -22,13 +22,6 @@ from eval_transcript.elevenlabs import (
     ElevenLabsError,
     elevenlabs_transcription_text,
 )
-from eval_transcript.huggingface import (
-    DEFAULT_API_KEY_ENV as HUGGINGFACE_API_KEY_ENV,
-    DEFAULT_PARAKEET_MODEL as HUGGINGFACE_DEFAULT_PARAKEET_MODEL,
-    DEFAULT_PROVIDER as HUGGINGFACE_DEFAULT_PROVIDER,
-    HuggingFaceClient,
-    HuggingFaceError,
-)
 from eval_transcript.manifest import DEFAULT_MANIFEST_PATH, discover_samples, render_manifest
 from eval_transcript.omlx import DEFAULT_API_KEY_ENV as OMLX_API_KEY_ENV, OmlxClient, OmlxError
 from eval_transcript.scaleway import (
@@ -116,17 +109,6 @@ def main() -> None:
     scaleway_transcribe.add_argument("--json", action="store_true", help="Print the raw chat completion JSON response")
     scaleway_transcribe.add_argument("--save", action="store_true", help="Write text output to data/transcriptions/<audio-stem>/scaleway__<model>.txt")
     scaleway_transcribe.add_argument("--output-dir", type=Path, default=None, help="Directory for saved text output; defaults to data/transcriptions and implies --save")
-
-    huggingface = subparsers.add_parser("huggingface", help="Interact with Hugging Face Inference Providers")
-    huggingface_subparsers = huggingface.add_subparsers(dest="huggingface_command")
-    huggingface_transcribe = huggingface_subparsers.add_parser("transcribe", help="Transcribe one audio file through Hugging Face Inference Providers")
-    huggingface_transcribe.add_argument("audio", type=Path, help="Audio file to transcribe")
-    huggingface_transcribe.add_argument("--model", default=HUGGINGFACE_DEFAULT_PARAKEET_MODEL, help="Model ID to use")
-    huggingface_transcribe.add_argument("--provider", default=HUGGINGFACE_DEFAULT_PROVIDER, help="Inference provider to use; defaults to auto")
-    huggingface_transcribe.add_argument("--api-key", default=None, help=f"Hugging Face token; defaults to ${HUGGINGFACE_API_KEY_ENV}")
-    huggingface_transcribe.add_argument("--json", action="store_true", help="Print the raw transcription JSON response")
-    huggingface_transcribe.add_argument("--save", action="store_true", help="Write text output to data/transcriptions/<audio-stem>/huggingface__<model>.txt")
-    huggingface_transcribe.add_argument("--output-dir", type=Path, default=None, help="Directory for saved text output; defaults to data/transcriptions and implies --save")
 
     elevenlabs = subparsers.add_parser("elevenlabs", help="Interact with ElevenLabs Speech to Text")
     elevenlabs_subparsers = elevenlabs.add_subparsers(dest="elevenlabs_command")
@@ -262,24 +244,6 @@ def main() -> None:
             )
             return
 
-        if args.command == "huggingface" and args.huggingface_command == "transcribe":
-            client = HuggingFaceClient(provider=args.provider, api_key=args.api_key)
-            result = client.transcribe(audio_path=args.audio, model=args.model)
-            text = transcription_text(result.get("text"))
-            print_transcription_output(
-                TranscriptionOutput(
-                    result=result,
-                    text=text,
-                    json_output=args.json,
-                    save=args.save,
-                    output_dir=args.output_dir,
-                    audio_path=args.audio,
-                    provider="huggingface",
-                    model=args.model,
-                )
-            )
-            return
-
         if args.command == "elevenlabs" and args.elevenlabs_command == "models":
             client = ElevenLabsClient(api_key=args.api_key, base_url=args.base_url, require_api_key=False)
             for model in client.list_models():
@@ -339,7 +303,7 @@ def main() -> None:
                 )
             )
             return
-    except (FileNotFoundError, ScoringError, AlbertError, ScalewayError, HuggingFaceError, ElevenLabsError, OmlxError, httpx.HTTPError) as exc:
+    except (FileNotFoundError, ScoringError, AlbertError, ScalewayError, ElevenLabsError, OmlxError, httpx.HTTPError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
@@ -351,8 +315,6 @@ def main() -> None:
         albert.print_help()
     elif args.command == "scaleway":
         scaleway.print_help()
-    elif args.command == "huggingface":
-        huggingface.print_help()
     elif args.command == "elevenlabs":
         elevenlabs.print_help()
     elif args.command == "omlx":

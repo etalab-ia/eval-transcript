@@ -10,7 +10,7 @@ Initial scope:
 - compare transcription quality for target models:
   - Whisper via WhisperX
   - Voxtral
-  - Parakeet
+  - Kyutai STT (`kyutai/stt-1b-en_fr`)
   - Cohere Transcribe
   - Scribe v2
 
@@ -123,27 +123,20 @@ uv run eval-transcript omlx transcribe data/audio/sample.wav \
   --save
 ```
 
-### Hugging Face Inference Providers
+### Kyutai STT (local, via the oMLX provider)
 
-The CLI includes a guarded Hugging Face provider command for Parakeet so the benchmark has a clear path once hosted inference is restored:
+[Kyutai STT](https://kyutai.org/stt) ships `kyutai/stt-1b-en_fr` (English/French, with built-in semantic VAD) and `kyutai/stt-2.6b-en`. It is **local-only**: there is no hosted or OpenAI-compatible HTTP endpoint. File transcription runs through the `moshi` (PyTorch) or `moshi_mlx` (Apple Silicon) packages, and the only server Kyutai ships is a Rust WebSocket streaming server. See [`kyutai-labs/delayed-streams-modeling`](https://github.com/kyutai-labs/delayed-streams-modeling) for the inference scripts.
 
-```bash
-uv run eval-transcript huggingface transcribe data/audio/sample.flac \
-  --model nvidia/parakeet-tdt-0.6b-v3
-```
-
-Set `HF_TOKEN` to a token with Inference Providers permission. As of the current tested `huggingface_hub` release, this command intentionally fails with a detailed upstream explanation for `nvidia/parakeet-tdt-0.6b-v3`: the Hub model page advertises Together ASR availability, but `huggingface_hub` removed Together `automatic-speech-recognition` support in `v1.16.1` after a multipart upload dependency regression. The relevant upstream PRs are:
-
-- `huggingface/huggingface_hub#4164`: added Together ASR support in `v1.16.0`
-- `huggingface/huggingface_hub#4248`: removed Together ASR support in `v1.16.1`, with a note that it should be re-added later
-
-Until Hugging Face publishes a patch release that restores Together ASR for this model, use the local oMLX Parakeet path instead:
+To benchmark Kyutai alongside the other models, run it behind a small local OpenAI-compatible server that wraps `moshi`/`moshi_mlx` and exposes `GET /v1/models` plus `POST /v1/audio/transcriptions` returning `{"text": ...}` on `http://localhost:8000/v1`, then transcribe through the generic [oMLX provider](#omlx-provider):
 
 ```bash
-uv run eval-transcript omlx transcribe data/audio/sample.wav \
-  --model parakeet-tdt-0.6b-v3 \
-  --language fr
+uv run eval-transcript omlx transcribe data/audio/sample.mp3 \
+  --model kyutai/stt-1b-en_fr \
+  --language fr \
+  --save
 ```
+
+This reuses the existing oMLX OpenAI-compatible client, so no Kyutai-specific provider code is needed. Use `kyutai/stt-1b-en_fr` for French.
 
 ### ElevenLabs provider
 
