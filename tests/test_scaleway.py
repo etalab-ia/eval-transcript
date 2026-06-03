@@ -72,6 +72,21 @@ class HelpersTests(unittest.TestCase):
     def test_transcription_text_handles_missing_fields(self) -> None:
         self.assertEqual(transcription_text({}), "")
 
+    def test_timeout_defaults_when_none(self) -> None:
+        from eval_transcript.scaleway import DEFAULT_TIMEOUT_SECONDS
+
+        self.assertEqual(ScalewayClient(secret_key="s", project_id="p").timeout, DEFAULT_TIMEOUT_SECONDS)
+
+    def test_timeout_override_is_honored(self) -> None:
+        self.assertEqual(ScalewayClient(secret_key="s", project_id="p", timeout=600.0).timeout, 600.0)
+
+    def test_non_positive_timeout_is_rejected(self) -> None:
+        from eval_transcript.scaleway import ScalewayError
+
+        for bad in (0, -5):
+            with self.assertRaisesRegex(ScalewayError, "timeout must be positive"):
+                ScalewayClient(secret_key="s", project_id="p", timeout=bad)
+
 
 if __name__ == "__main__":
     unittest.main()
