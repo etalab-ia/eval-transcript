@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,15 +31,17 @@ class ElevenLabsClient:
         *,
         api_key: str | None = None,
         base_url: str | None = None,
-        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        timeout: float | None = None,
         sdk_client: Any | None = None,
         require_api_key: bool = True,
     ) -> None:
+        if timeout is not None and (timeout <= 0 or not math.isfinite(timeout)):
+            raise ElevenLabsError(f"timeout must be positive and finite, got {timeout}")
         self.api_key = api_key if api_key is not None else os.getenv(DEFAULT_API_KEY_ENV)
         if require_api_key and not self.api_key:
             raise ElevenLabsError(f"{DEFAULT_API_KEY_ENV} is required for ElevenLabs transcription")
         self.base_url = (base_url if base_url is not None else os.getenv(DEFAULT_BASE_URL_ENV)) or None
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else DEFAULT_TIMEOUT_SECONDS
         self._sdk_client = sdk_client
 
     @property

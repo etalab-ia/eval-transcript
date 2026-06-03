@@ -17,6 +17,7 @@ from eval_transcript.elevenlabs import (
     DEFAULT_API_KEY_ENV as ELEVENLABS_API_KEY_ENV,
     DEFAULT_BASE_URL_ENV as ELEVENLABS_BASE_URL_ENV,
     DEFAULT_MODEL as ELEVENLABS_DEFAULT_MODEL,
+    DEFAULT_TIMEOUT_SECONDS as ELEVENLABS_DEFAULT_TIMEOUT_SECONDS,
     ElevenLabsClient,
     ElevenLabsError,
     elevenlabs_transcription_text,
@@ -145,6 +146,7 @@ def main() -> None:
     elevenlabs_transcribe.add_argument("--no-verbatim", action="store_true", default=None, help="Remove filler words, false starts, and disfluencies; only supported with scribe_v2")
     elevenlabs_transcribe.add_argument("--api-key", default=None, help=f"ElevenLabs API key; defaults to ${ELEVENLABS_API_KEY_ENV}")
     elevenlabs_transcribe.add_argument("--base-url", default=None, help=f"Optional ElevenLabs API base URL; defaults to ${ELEVENLABS_BASE_URL_ENV} if set")
+    elevenlabs_transcribe.add_argument("--timeout", type=float, default=None, help=f"HTTP timeout in seconds; raise it for long audio (default: {ELEVENLABS_DEFAULT_TIMEOUT_SECONDS:g})")
     elevenlabs_transcribe.add_argument("--json", action="store_true", help="Print the raw transcription JSON response")
     elevenlabs_transcribe.add_argument("--save", action="store_true", help="Write text output to data/transcriptions/<audio-stem>/elevenlabs__<model>.txt")
     elevenlabs_transcribe.add_argument("--output-dir", type=Path, default=None, help="Directory for saved text output; defaults to data/transcriptions and implies --save")
@@ -285,7 +287,7 @@ def main() -> None:
             return
 
         if args.command == "elevenlabs" and args.elevenlabs_command == "transcribe":
-            client = ElevenLabsClient(api_key=args.api_key, base_url=args.base_url)
+            client = ElevenLabsClient(api_key=args.api_key, base_url=args.base_url, timeout=args.timeout)
             result = client.transcribe(
                 audio_path=args.audio,
                 model=args.model,
