@@ -137,7 +137,7 @@ class ScoreCliTests(unittest.TestCase):
             source_truth_dir.mkdir()
             sample_dir.mkdir(parents=True)
             (source_truth_dir / "sample-a.md").write_text("bonjour le monde", encoding="utf-8")
-            (sample_dir / "omlx__parakeet.txt").write_text("bonjour monde", encoding="utf-8")
+            (sample_dir / "omlx__kyutai.txt").write_text("bonjour monde", encoding="utf-8")
             (sample_dir / "albert__whisper.txt").write_text("bonjour le monde", encoding="utf-8")
 
             scored = score_sample_outputs(
@@ -163,7 +163,7 @@ class ScoreCliTests(unittest.TestCase):
             source_truth_dir.mkdir()
             sample_dir.mkdir(parents=True)
             (source_truth_dir / "sample-a.txt").write_text("bonjour le monde", encoding="utf-8")
-            (sample_dir / "omlx__parakeet.txt").write_text("bonjour monde", encoding="utf-8")
+            (sample_dir / "omlx__kyutai.txt").write_text("bonjour monde", encoding="utf-8")
 
             scored = score_sample_outputs(
                 "sample-a",
