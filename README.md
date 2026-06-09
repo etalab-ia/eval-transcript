@@ -146,7 +146,7 @@ print(" ".join(s["text"].strip() for s in result["segments"]))
 Save the output as a benchmark column under `data/transcriptions/<audio-stem>/whisperx__large-v2.txt`:
 
 ```bash
-uv run python transcribe.py data/audio/sample.mp3 \
+.venv/bin/python transcribe.py data/audio/sample.mp3 \
   > data/transcriptions/sample/whisperx__large-v2.txt
 ```
 
@@ -169,9 +169,10 @@ This reuses the existing oMLX OpenAI-compatible client, so no Kyutai-specific pr
 
 #### Native long-form (Apple Silicon, MLX)
 
-For long files, transcribe directly with the `stt_from_file_mlx.py` script from [`kyutai-labs/delayed-streams-modeling`](https://github.com/kyutai-labs/delayed-streams-modeling) (`scripts/`). It uses the MLX Mimi tokenizer and runs the streaming model end to end, letting the model pick segment boundaries with its built-in semantic VAD — no manual chunking:
+For long files, transcribe directly with the `stt_from_file_mlx.py` script from [`kyutai-labs/delayed-streams-modeling`](https://github.com/kyutai-labs/delayed-streams-modeling) (`scripts/`). It uses the MLX Mimi tokenizer and runs the streaming model end to end, letting the model pick segment boundaries with its built-in semantic VAD — no manual chunking. The script is not part of this repo; download it first, then run it with `uv run --script` (its PEP 723 header pins `moshi_mlx`, so it runs in an isolated env):
 
 ```bash
+curl -O https://raw.githubusercontent.com/kyutai-labs/delayed-streams-modeling/main/scripts/stt_from_file_mlx.py
 uv run --script stt_from_file_mlx.py data/audio/sample.mp3 --max-steps 8000
 ```
 
