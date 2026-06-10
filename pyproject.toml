@@ -26,3 +26,10 @@ build-backend = "uv_build"
 dev = [
     "pre-commit>=4.6.0",
 ]
+# Optional benchmark-only group: WhisperX is the Transcript production ASR engine.
+# Pinned to the version used by suitenumerique/meet-whisperx. Not a CLI dependency.
+# Run with: uv run --python 3.12 --group whisperx ...  (CTranslate2 is CPU-only on
+# Apple Silicon and requires Python < 3.13).
+whisperx = [
+    "whisperx==3.8.5",
+]

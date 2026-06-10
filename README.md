@@ -127,13 +127,9 @@ uv run eval-transcript omlx transcribe data/audio/sample.wav \
 
 Transcript (La Suite's meeting transcription) runs **WhisperX** in production: faster-whisper `large-v2` behind a pyannote VAD, served as an OpenAI-compatible HTTP server ([`suitenumerique/meet-whisperx`](https://github.com/suitenumerique/meet-whisperx)). For benchmarking you only need the two components that affect WER — the **ASR model + VAD** — so alignment and diarization can be skipped (they relocate words and add speaker labels, but do not change the transcript text).
 
-WhisperX uses CTranslate2, which is **CPU-only on Apple Silicon** (no Metal) and requires **Python < 3.13**. Set up an isolated environment:
+WhisperX is not a CLI dependency; it is declared as an optional `whisperx` dependency group in `pyproject.toml`, pinned to the production version (`whisperx==3.8.5`, as used by `suitenumerique/meet-whisperx`). CTranslate2 is **CPU-only on Apple Silicon** (no Metal) and requires **Python < 3.13**, so run the group with `--python 3.12`.
 
-```bash
-uv venv --python 3.12 && uv pip install whisperx
-```
-
-Minimal transcription script (`transcribe.py`) — VAD = pyannote default (same as prod), no alignment/diarization:
+Save this minimal transcription script as `transcribe.py` — VAD = pyannote default (same as prod), no alignment/diarization:
 
 ```python
 import sys, whisperx
@@ -146,7 +142,7 @@ print(" ".join(s["text"].strip() for s in result["segments"]))
 Save the output as a benchmark column under `data/transcriptions/<audio-stem>/whisperx__large-v2.txt`:
 
 ```bash
-.venv/bin/python transcribe.py data/audio/sample.mp3 \
+uv run --python 3.12 --group whisperx python transcribe.py data/audio/sample.mp3 \
   > data/transcriptions/sample/whisperx__large-v2.txt
 ```
 
@@ -173,11 +169,14 @@ For long files, transcribe directly with the `stt_from_file_mlx.py` script from 
 
 ```bash
 curl -O https://raw.githubusercontent.com/kyutai-labs/delayed-streams-modeling/main/scripts/stt_from_file_mlx.py
+# Upstream declares --max-steps without type=int, so "8000" arrives as a string and
+# crashes in an MLX tensor shape. Patch it to an int before transcribing long files:
+perl -pi -e 's/--max-steps", default=4096/--max-steps", type=int, default=4096/' stt_from_file_mlx.py
 uv run --script stt_from_file_mlx.py data/audio/sample.mp3 --max-steps 8000
 ```
 
 Notes:
-- Set `--max-steps` higher than `duration_seconds * 12.5` (the default `4096` truncates around 5.5 min). The flag must be an integer.
+- The script appends ~2 s of zero padding, so set `--max-steps` to about `ceil((duration_seconds + 2) * 12.5)` plus a small margin (the default `4096` truncates around 5.5 min). It must be an integer — hence the `type=int` patch above; without it, `--max-steps 8000` is passed as a string and crashes.
 - Avoid `python -m moshi_mlx.run_inference` for long files: its `rustymimi` tokenizer caps around ~11 minutes of audio.
 - The transcript is printed on stdout after the `starting inference ...` line; redirect it and drop the leading log lines to build `data/transcriptions/<audio-stem>/kyutai-native__stt-1b-en_fr.txt`.
 
