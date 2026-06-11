@@ -105,14 +105,23 @@ After downloading a candidate locally and restarting or refreshing oMLX model di
 uv run eval-transcript omlx models
 ```
 
-Then pass that exact alias to the transcription command. If oMLX exposes the repository name as the alias, the command is:
+If the model is only in your HuggingFace cache and does **not** appear in `omlx models`, oMLX's discovery skipped it: its HF-cache heuristic only auto-trusts a hardcoded list of repo names, and `CohereLabs/...` is not on it. Symlink the snapshot into the oMLX model directory and restart the server so it is discovered as a local model (local dirs are classified by `model_type`, here `cohere_asr`, which mlx-audio supports):
+
+```bash
+mkdir -p ~/.omlx/models
+ln -s ~/.cache/huggingface/hub/models--CohereLabs--cohere-transcribe-03-2026/snapshots/<hash> \
+  ~/.omlx/models/cohere-transcribe-03-2026
+```
+
+Then pass that exact alias to the transcription command. For French you **must** pass `--language fr`:
 
 ```bash
 uv run eval-transcript omlx transcribe data/audio/sample.wav \
-  --model cohere-transcribe-03-2026
+  --model cohere-transcribe-03-2026 \
+  --language fr
 ```
 
-If oMLX exposes a different alias, use the alias printed by `omlx models` instead. Cohere Transcribe supports French, but on oMLX `0.3.12` the `--language fr` option is currently broken because oMLX maps `fr` to `french` before calling the Cohere loader. Omit `--language` for now; the smoke test transcribed French correctly without a language hint.
+If oMLX exposes a different alias, use the alias printed by `omlx models` instead. **The `--language fr` hint is required, not optional**: Cohere's `generate()` defaults to `en`, so without a hint it transcribes French audio *into English* (massive drift — ~70 % WER vs ~13 % with the hint on our FR corpus). On oMLX `0.4.4` the hint passes through correctly, because oMLX gates its `fr`→`french` remapping on a `support_languages` config field while Cohere declares `supported_languages` (ISO codes) and accepts `fr` directly. (The earlier "omit `--language`" advice applied to oMLX `0.3.12`, which mismapped `fr`; do not omit it on 0.4.4+.)
 
 To save the text output for later comparison, use `--save`. The file is written to `data/transcriptions/<audio-stem>/omlx__<model>.txt`:
 
@@ -165,7 +174,7 @@ This reuses the existing oMLX OpenAI-compatible client, so no Kyutai-specific pr
 
 #### Native long-form (Apple Silicon, MLX)
 
-For long files, transcribe directly with the `stt_from_file_mlx.py` script from [`kyutai-labs/delayed-streams-modeling`](https://github.com/kyutai-labs/delayed-streams-modeling) (`scripts/`). It uses the MLX Mimi tokenizer and runs the streaming model end to end, letting the model pick segment boundaries with its built-in semantic VAD — no manual chunking. The script is not part of this repo; download it first, then run it with `uv run --script` (its PEP 723 header pins `moshi_mlx`, so it runs in an isolated env):
+For long files, transcribe directly with the `stt_from_file_mlx.py` script from [`kyutai-labs/delayed-streams-modeling`](https://github.com/kyutai-labs/delayed-streams-modeling) (`scripts/`). It uses the MLX Mimi tokenizer and runs the streaming model end to end. The script is not part of this repo; download it first, then run it with `uv run --script` (its PEP 723 header pins `moshi_mlx`, so it runs in an isolated env):
 
 ```bash
 curl -O https://raw.githubusercontent.com/kyutai-labs/delayed-streams-modeling/main/scripts/stt_from_file_mlx.py
@@ -175,8 +184,16 @@ perl -pi -e 's/--max-steps", default=4096/--max-steps", type=int, default=4096/'
 uv run --script stt_from_file_mlx.py data/audio/sample.mp3 --max-steps 8000
 ```
 
+> [!WARNING]
+> **A single continuous pass collapses past ~4 min — chunk and reset.** Kyutai's transformer has a 3000-frame context (≈4 min at 12.5 Hz) backed by a rotating KV cache. Running one uninterrupted streaming pass on a longer file (as the command above does) makes the cache and RoPE positions degenerate into a deterministic loop of function words (`encore encore tout`), **regardless of audio difficulty** — reproduced identically on `moshi_mlx` 0.2.12 and 0.3.0. The script's built-in semantic VAD does **not** prevent this; do not rely on it for long audio. Instead, **split the audio into ~30 s segments aligned on the quietest nearby point and reset the model state between segments**:
+>
+> - MLX (`moshi_mlx`): `for c in model.transformer_cache: c.reset()` + `mimi.reset_state()` + a fresh `LmGen` per segment.
+> - transformers (`KyutaiSpeechToTextForConditionalGeneration`): a fresh `generate()` per segment is enough.
+>
+> Each segment then stays well under the 4 min window and transcribes cleanly. Doing this **inside your wrapper server** keeps the `omlx transcribe` call above unchanged. On our FR corpus, chunking takes Kyutai from **43–84 % WER (continuous streaming) back down to the 3–35 % "chunked" tier**, on par with the model's documented quality.
+
 Notes:
-- The script appends ~2 s of zero padding, so set `--max-steps` to about `ceil((duration_seconds + 2) * 12.5)` plus a small margin (the default `4096` truncates around 5.5 min). It must be an integer — hence the `type=int` patch above; without it, `--max-steps 8000` is passed as a string and crashes.
+- For audio **under ~4 min**, the single-pass command above is fine. The script appends ~2 s of zero padding, so set `--max-steps` to about `ceil((duration_seconds + 2) * 12.5)` plus a small margin (the default `4096` truncates around 5.5 min). It must be an integer — hence the `type=int` patch above; without it, `--max-steps 8000` is passed as a string and crashes.
 - Avoid `python -m moshi_mlx.run_inference` for long files: its `rustymimi` tokenizer caps around ~11 minutes of audio.
 - The transcript is printed on stdout after the `starting inference ...` line; redirect it and drop the leading log lines to build `data/transcriptions/<audio-stem>/kyutai-native__stt-1b-en_fr.txt`.
 
