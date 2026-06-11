@@ -7,6 +7,7 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
+from eval_transcript.data_migrate import DataMigrationError, migrate_source_truth_to_ground_truth
 from eval_transcript.albert import (
     DEFAULT_API_KEY_ENV as ALBERT_API_KEY_ENV,
     DEFAULT_TRANSCRIPTION_MODEL as ALBERT_DEFAULT_TRANSCRIPTION_MODEL,
@@ -33,7 +34,7 @@ from eval_transcript.scaleway import (
 )
 from eval_transcript.scoring import NormalizationMode
 from eval_transcript.scoring_cli import (
-    DEFAULT_SOURCE_TRUTH_DIR as SCORING_DEFAULT_SOURCE_TRUTH_DIR,
+    DEFAULT_GROUND_TRUTH_DIR as SCORING_DEFAULT_GROUND_TRUTH_DIR,
     DEFAULT_TRANSCRIPTIONS_DIR as SCORING_DEFAULT_TRANSCRIPTIONS_DIR,
     ScoringError,
     render_scores_output,
@@ -42,6 +43,19 @@ from eval_transcript.scoring_cli import (
     write_or_print_score_output,
 )
 from eval_transcript.transcriptions import TranscriptionOutput, print_transcription_output, transcription_text
+
+
+DEPRECATED_SOURCE_TRUTH_FLAG_MESSAGE = (
+    "Warning: --source-truth-dir is deprecated; use --ground-truth-dir instead."
+)
+
+
+def resolve_ground_truth_dir(args: argparse.Namespace) -> Path:
+    source_truth_dir = getattr(args, "source_truth_dir", None)
+    if source_truth_dir is not None:
+        print(DEPRECATED_SOURCE_TRUTH_FLAG_MESSAGE, file=sys.stderr)
+        return source_truth_dir
+    return args.ground_truth_dir
 
 
 def main() -> None:
@@ -55,8 +69,16 @@ def main() -> None:
     manifest_sync = manifest_subparsers.add_parser("sync", help="Write data/manifest.md from current benchmark files")
     manifest_sync.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST_PATH, help="Manifest path to write")
 
+    data = subparsers.add_parser("data", help="Manage local benchmark data")
+    data_subparsers = data.add_subparsers(dest="data_command")
+    data_migrate = data_subparsers.add_parser("migrate", help="Migrate data/source_truth to data/ground_truth")
+    data_migrate.add_argument("--source", type=Path, default=Path("data/source_truth"), help="Legacy source_truth directory to move")
+    data_migrate.add_argument("--target", type=Path, default=Path("data/ground_truth"), help="New ground_truth directory to create")
+    data_migrate.add_argument("--force", action="store_true", help="Merge into an existing ground_truth directory")
+
     score_parent = argparse.ArgumentParser(add_help=False)
-    score_parent.add_argument("--source-truth-dir", type=Path, default=SCORING_DEFAULT_SOURCE_TRUTH_DIR, help="Directory containing source truth .md files")
+    score_parent.add_argument("--ground-truth-dir", type=Path, default=SCORING_DEFAULT_GROUND_TRUTH_DIR, help="Directory containing ground truth .md or .txt files")
+    score_parent.add_argument("--source-truth-dir", type=Path, default=None, help=argparse.SUPPRESS)
     score_parent.add_argument("--transcriptions-dir", type=Path, default=SCORING_DEFAULT_TRANSCRIPTIONS_DIR, help="Directory containing generated transcript outputs")
     score_parent.add_argument("--normalization", choices=[mode.value for mode in NormalizationMode], default=NormalizationMode.STANDARD.value, help="Normalization mode used before scoring")
     score_parent.add_argument("--json", action="store_true", help="Print machine-readable scoring JSON")
@@ -65,11 +87,11 @@ def main() -> None:
     score_parent.add_argument("--align", action="store_true", help="Show normalized REF/HYP/ERR alignment blocks in text output")
     score_parent.add_argument("--top-errors", type=int, default=10, help="Number of top substitutions, insertions, and deletions to show in text output; use 0 to hide")
 
-    score = subparsers.add_parser("score", help="Score generated transcripts against source truth")
+    score = subparsers.add_parser("score", help="Score generated transcripts against ground truth")
     score_subparsers = score.add_subparsers(dest="score_command")
     score_sample = score_subparsers.add_parser("sample", parents=[score_parent], help="Score all generated transcripts for one sample")
-    score_sample.add_argument("sample_id", help="Sample ID matching data/source_truth/<sample-id>.md")
-    score_subparsers.add_parser("all", parents=[score_parent], help="Score all source truth/generated transcript pairs")
+    score_sample.add_argument("sample_id", help="Sample ID matching data/ground_truth/<sample-id>.md")
+    score_subparsers.add_parser("all", parents=[score_parent], help="Score all ground truth/generated transcript pairs")
 
     albert = subparsers.add_parser("albert", help="Interact with Albert API")
     albert_subparsers = albert.add_subparsers(dest="albert_command")
@@ -159,10 +181,19 @@ def main() -> None:
             print(args.manifest)
             return
 
+        if args.command == "data" and args.data_command == "migrate":
+            result = migrate_source_truth_to_ground_truth(
+                source_dir=args.source,
+                target_dir=args.target,
+                force=args.force,
+            )
+            print(result.message)
+            return
+
         if args.command == "score" and args.score_command == "sample":
             scored = score_sample_outputs(
                 args.sample_id,
-                source_truth_dir=args.source_truth_dir,
+                ground_truth_dir=resolve_ground_truth_dir(args),
                 transcriptions_dir=args.transcriptions_dir,
                 normalization=args.normalization,
             )
@@ -179,7 +210,7 @@ def main() -> None:
 
         if args.command == "score" and args.score_command == "all":
             scored = score_all_outputs(
-                source_truth_dir=args.source_truth_dir,
+                ground_truth_dir=resolve_ground_truth_dir(args),
                 transcriptions_dir=args.transcriptions_dir,
                 normalization=args.normalization,
             )
@@ -303,12 +334,14 @@ def main() -> None:
                 )
             )
             return
-    except (FileNotFoundError, ScoringError, AlbertError, ScalewayError, ElevenLabsError, OmlxError, httpx.HTTPError) as exc:
+    except (FileNotFoundError, DataMigrationError, ScoringError, AlbertError, ScalewayError, ElevenLabsError, OmlxError, httpx.HTTPError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
     if args.command == "manifest":
         manifest.print_help()
+    elif args.command == "data":
+        data.print_help()
     elif args.command == "score":
         score.print_help()
     elif args.command == "albert":

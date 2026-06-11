@@ -9,12 +9,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 from eval_transcript.manifest import (
-    DEFAULT_SOURCE_TRUTH_DIR,
+    DEFAULT_GROUND_TRUTH_DIR,
     DEFAULT_TRANSCRIPTIONS_DIR,
-    SOURCE_TRUTH_SUFFIXES,
+    GROUND_TRUTH_SUFFIXES,
     discover_sample_ids,
+    find_ground_truth_path,
     find_output_paths,
-    find_source_truth_path,
     parse_output_name,
 )
 from eval_transcript.scoring import AlignmentOperation, AggregateScore, NormalizationMode, TranscriptScore, aggregate_scores, score_transcript_pair
@@ -25,9 +25,15 @@ class ScoredTranscript:
     sample_id: str
     provider: str
     model: str
-    source_truth_path: Path
+    ground_truth_path: Path
     transcription_path: Path
     score: TranscriptScore
+
+    @property
+    def source_truth_path(self) -> Path:
+        """Deprecated alias for the pre-ground_truth score field."""
+
+        return self.ground_truth_path
 
 
 @dataclass(frozen=True)
@@ -49,11 +55,11 @@ class ScoringError(RuntimeError):
 def score_output_paths(
     *,
     sample_id: str,
-    source_truth_path: Path,
+    ground_truth_path: Path,
     output_paths: list[Path],
     normalization: NormalizationMode | str = NormalizationMode.STANDARD,
 ) -> list[ScoredTranscript]:
-    reference = source_truth_path.read_text(encoding="utf-8")
+    reference = ground_truth_path.read_text(encoding="utf-8")
     scored: list[ScoredTranscript] = []
     for transcription_path in output_paths:
         hypothesis = transcription_path.read_text(encoding="utf-8")
@@ -63,7 +69,7 @@ def score_output_paths(
                 sample_id=sample_id,
                 provider=provider,
                 model=model,
-                source_truth_path=source_truth_path,
+                ground_truth_path=ground_truth_path,
                 transcription_path=transcription_path,
                 score=score_transcript_pair(reference, hypothesis, normalization=normalization),
             )
@@ -74,14 +80,16 @@ def score_output_paths(
 def score_sample_outputs(
     sample_id: str,
     *,
-    source_truth_dir: Path = DEFAULT_SOURCE_TRUTH_DIR,
+    ground_truth_dir: Path = DEFAULT_GROUND_TRUTH_DIR,
+    source_truth_dir: Path | None = None,
     transcriptions_dir: Path = DEFAULT_TRANSCRIPTIONS_DIR,
     normalization: NormalizationMode | str = NormalizationMode.STANDARD,
 ) -> list[ScoredTranscript]:
-    source_truth_path = find_source_truth_path(source_truth_dir, sample_id)
-    if source_truth_path is None:
-        expected = " or ".join((source_truth_dir / f"{sample_id}{suffix}").as_posix() for suffix in SOURCE_TRUTH_SUFFIXES)
-        raise ScoringError(f"Missing source truth for sample {sample_id}: expected {expected}")
+    resolved_ground_truth_dir = source_truth_dir or ground_truth_dir
+    ground_truth_path = find_ground_truth_path(resolved_ground_truth_dir, sample_id)
+    if ground_truth_path is None:
+        expected = " or ".join((resolved_ground_truth_dir / f"{sample_id}{suffix}").as_posix() for suffix in GROUND_TRUTH_SUFFIXES)
+        raise ScoringError(f"Missing ground truth for sample {sample_id}: expected {expected}")
 
     output_paths = find_output_paths(transcriptions_dir, sample_id)
     if not output_paths:
@@ -89,7 +97,7 @@ def score_sample_outputs(
 
     return score_output_paths(
         sample_id=sample_id,
-        source_truth_path=source_truth_path,
+        ground_truth_path=ground_truth_path,
         output_paths=output_paths,
         normalization=normalization,
     )
@@ -97,15 +105,21 @@ def score_sample_outputs(
 
 def score_all_outputs(
     *,
-    source_truth_dir: Path = DEFAULT_SOURCE_TRUTH_DIR,
+    ground_truth_dir: Path = DEFAULT_GROUND_TRUTH_DIR,
+    source_truth_dir: Path | None = None,
     transcriptions_dir: Path = DEFAULT_TRANSCRIPTIONS_DIR,
     normalization: NormalizationMode | str = NormalizationMode.STANDARD,
 ) -> list[ScoredTranscript]:
-    sample_ids = discover_sample_ids(audio_dir=Path("__missing_audio_dir__"), source_truth_dir=source_truth_dir, transcriptions_dir=transcriptions_dir)
+    resolved_ground_truth_dir = source_truth_dir or ground_truth_dir
+    sample_ids = discover_sample_ids(
+        audio_dir=Path("__missing_audio_dir__"),
+        ground_truth_dir=resolved_ground_truth_dir,
+        transcriptions_dir=transcriptions_dir,
+    )
     scored: list[ScoredTranscript] = []
     for sample_id in sample_ids:
-        source_truth_path = find_source_truth_path(source_truth_dir, sample_id)
-        if source_truth_path is None:
+        ground_truth_path = find_ground_truth_path(resolved_ground_truth_dir, sample_id)
+        if ground_truth_path is None:
             continue
         output_paths = find_output_paths(transcriptions_dir, sample_id)
         if not output_paths:
@@ -113,14 +127,14 @@ def score_all_outputs(
         scored.extend(
             score_output_paths(
                 sample_id=sample_id,
-                source_truth_path=source_truth_path,
+                ground_truth_path=ground_truth_path,
                 output_paths=output_paths,
                 normalization=normalization,
             )
         )
     if not scored:
         raise ScoringError(
-            f"No scoreable transcript pairs found under {source_truth_dir} and {transcriptions_dir}"
+            f"No scoreable transcript pairs found under {resolved_ground_truth_dir} and {transcriptions_dir}"
         )
     return scored
 
@@ -183,7 +197,7 @@ def scored_transcript_to_dict(item: ScoredTranscript) -> dict[str, Any]:
         "sample_id": item.sample_id,
         "provider": item.provider,
         "model": item.model,
-        "source_truth_path": item.source_truth_path.as_posix(),
+        "ground_truth_path": item.ground_truth_path.as_posix(),
         "transcription_path": item.transcription_path.as_posix(),
         "metrics": {
             "wer": score.wer,
@@ -495,7 +509,7 @@ def render_scores_csv(scored: list[ScoredTranscript]) -> str:
             "sample_id",
             "provider",
             "model",
-            "source_truth_path",
+            "ground_truth_path",
             "transcription_path",
             "wer",
             "cer",
@@ -519,7 +533,7 @@ def render_scores_csv(scored: list[ScoredTranscript]) -> str:
                 "sample_id": item.sample_id,
                 "provider": item.provider,
                 "model": item.model,
-                "source_truth_path": item.source_truth_path.as_posix(),
+                "ground_truth_path": item.ground_truth_path.as_posix(),
                 "transcription_path": item.transcription_path.as_posix(),
                 "wer": score.wer,
                 "cer": score.cer,

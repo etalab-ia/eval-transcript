@@ -5,7 +5,7 @@ Simple benchmarking service for audio transcription for the French administratio
 Initial scope:
 
 - manage benchmark audio files under `data/audio/`
-- keep source-of-truth transcriptions under `data/source_truth/`
+- keep ground-truth transcriptions under `data/ground_truth/`
 - store model outputs under `data/transcriptions/`
 - compare transcription quality for target models:
   - Whisper via WhisperX
@@ -71,7 +71,7 @@ uv run eval-transcript omlx transcribe data/audio/sample.wav \
   --language fr
 ```
 
-The transcribe command prints text only by default for quick visual comparison against source-of-truth transcripts. Use `--json` to print the raw response with segment metadata.
+The transcribe command prints text only by default for quick visual comparison against ground-truth transcripts. Use `--json` to print the raw response with segment metadata.
 
 For Cohere Transcribe on Apple Silicon, use the original Cohere model with oMLX's `mlx-audio` STT loader:
 
@@ -209,9 +209,18 @@ The repository tracks the directory structure only. Audio and generated transcri
 data/
 ├── manifest.md        # benchmark index generated from local data files
 ├── audio/             # input audio files
-├── source_truth/      # human/source-of-truth transcripts
+├── ground_truth/      # human/ground-truth transcripts
 └── transcriptions/    # model-generated transcripts
 ```
+
+
+The ground-truth directory was previously named `data/source_truth/`. Existing checkouts can migrate the local directory with:
+
+```bash
+uv run eval-transcript data migrate
+```
+
+The legacy `--source-truth-dir` scoring flag is kept as a hidden deprecated alias for one release; prefer `--ground-truth-dir` in new scripts.
 
 Generate or refresh the global benchmark manifest after adding local data files:
 
@@ -221,7 +230,7 @@ uv run eval-transcript manifest sync
 
 ### Scoring transcripts
 
-Score generated transcripts against source truth with the jiwer-backed scoring engine:
+Score generated transcripts against ground truth with the jiwer-backed scoring engine:
 
 ```bash
 uv run eval-transcript score all
@@ -233,7 +242,7 @@ Score all generated outputs for one sample:
 uv run eval-transcript score sample sample
 ```
 
-The scorer matches `data/source_truth/<sample-id>.md` (or `.txt`) with `data/transcriptions/<sample-id>/*.txt` and reports WER, CER, substitution/deletion/insertion counts, and the reference token count. Aggregate WER is computed from total edit counts across all scored transcripts, not by averaging per-transcript WER values. Text, Markdown, and JSON outputs also include provider/model grouped WER summaries for model comparison.
+The scorer matches `data/ground_truth/<sample-id>.md` (or `.txt`) with `data/transcriptions/<sample-id>/*.txt` and reports WER, CER, substitution/deletion/insertion counts, and the reference token count. Aggregate WER is computed from total edit counts across all scored transcripts, not by averaging per-transcript WER values. Text, Markdown, and JSON outputs also include provider/model grouped WER summaries for model comparison.
 
 Use `--json` for machine-readable output, or `--normalization raw` to score exact text after Unicode normalization only. The default `standard` normalization is conservative for French: it normalizes Unicode, casing, apostrophe variants, punctuation/symbols, and whitespace while preserving accents.
 
@@ -243,6 +252,6 @@ Text output includes top substitutions, insertions, and deletions by default. Us
 
 Use `--format markdown` or `--format csv` for report-friendly output, and `--output PATH` to write the rendered scoring report to a file. `--json` remains available as a shortcut for `--format json`.
 
-`data/manifest.md` uses Markdown with YAML frontmatter to index samples, source-truth paths, generated outputs, and placeholder metadata such as language, duration, domain, runtime, and real-time factor.
+`data/manifest.md` uses Markdown with YAML frontmatter to index samples, ground-truth paths, generated outputs, and placeholder metadata such as language, duration, domain, runtime, and real-time factor.
 
-Source-of-truth transcripts are matched to a sample by basename and may be either `.txt` or `.md` (for example `data/source_truth/sample.txt` for `data/audio/sample.wav`).
+Ground-truth transcripts are matched to a sample by basename and may be either `.txt` or `.md` (for example `data/ground_truth/sample.txt` for `data/audio/sample.wav`).

@@ -20,6 +20,9 @@ htmlcov/
 # Benchmark data: keep directory structure, not data artifacts
 /data/audio/**
 !/data/audio/.gitkeep
+/data/ground_truth/**
+!/data/ground_truth/.gitkeep
+# Legacy path kept during the source_truth -> ground_truth cutover.
 /data/source_truth/**
 !/data/source_truth/.gitkeep
 /data/transcriptions/**
