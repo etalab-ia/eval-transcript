@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -102,9 +103,15 @@ def run_judge(
         raise JudgeCliError("Aucun couple (référence, hypothèse) trouvé.")
     client = client or AlbertClient()
     results: list[JudgeResult] = []
+    failures = 0
     for i, pair in enumerate(pairs, 1):
         if progress:
-            print(f"[{i}/{len(pairs)}] juge {pair.sample_id} :: {pair.provider}/{pair.model} …", flush=True)
+            # Logs sur stderr : stdout est réservé au rapport Markdown (pipe-safe).
+            print(
+                f"[{i}/{len(pairs)}] juge {pair.sample_id} :: {pair.provider}/{pair.model} …",
+                file=sys.stderr,
+                flush=True,
+            )
         reference = pair.ground_truth_path.read_text(encoding="utf-8")
         hypothesis = pair.transcription_path.read_text(encoding="utf-8")
         try:
@@ -119,10 +126,29 @@ def run_judge(
                 passes=passes,
             )
         except JudgeError as exc:
-            print(f"    ⚠️  {exc}", flush=True)
+            failures += 1
+            print(f"    ⚠️  {pair.sample_id} :: {pair.provider}/{pair.model} — {exc}", file=sys.stderr, flush=True)
             continue
         results.append(result)
+    # Ne pas réussir silencieusement (exit 0 + rapport vide) si tout a échoué :
+    # une clé Albert invalide doit faire échouer la commande en CI / script.
+    if not results and failures:
+        raise JudgeCliError(
+            f"Aucun jugement produit : les {failures} couple(s) ont tous échoué (voir les erreurs ci-dessus)."
+        )
     return results
+
+
+def write_or_print_report(content: str, *, output_path: Path | None = None) -> None:
+    """Écrit le rapport sur disque, ou sur stdout si aucun chemin (pipe-safe)."""
+    if output_path is None:
+        print(content)
+        return
+    if output_path.is_dir():
+        raise JudgeCliError(f"Output path must be a file, not a directory: {output_path}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(content, encoding="utf-8")
+    print(f"Rapport écrit : {output_path}", file=sys.stderr)
 
 
 def render_markdown(results: list[JudgeResult], *, include_g1: bool = True) -> str:
@@ -133,8 +159,9 @@ def render_markdown(results: list[JudgeResult], *, include_g1: bool = True) -> s
             f"> Juge : `{results[0].judge_model}` (Albert API). Hors scope : G0 (ponctuation, euh, répétitions)."
         )
         lines.append(
-            "> **Score** = somme pondérée (G3=6, G2=2, G1=1) normalisée pour 1000 mots de référence. "
-            "Tout `effondrement` force le verdict `inexploitable`. Trié du plus dégradé au plus fidèle.\n"
+            "> **Score** = somme pondérée (G3=6, G2=2, G1=1, effondrement=12) normalisée pour 1000 mots "
+            "de référence. Un `effondrement` applique un plancher de verdict `sens_degrade` (jamais "
+            "`fidele`/`alterations_mineures`). Trié du plus dégradé au plus fidèle.\n"
         )
 
     # Tableau de synthèse, trié par score décroissant (le pire en haut)

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
+from eval_transcript.albert import AlbertError
 from eval_transcript.judge import (
     EFFONDREMENT_WEIGHT,
     SEVERITY_WEIGHTS,
@@ -14,6 +17,14 @@ from eval_transcript.judge import (
     _verdict_from,
     parse_judge_response,
 )
+from eval_transcript.judge_cli import JudgeCliError, run_judge, write_or_print_report
+
+
+class _FailingClient:
+    """Client factice dont chaque appel juge échoue (clé invalide simulée)."""
+
+    def chat_completion_text(self, **kwargs: object) -> str:
+        raise AlbertError("403 Forbidden - Invalid API key.")
 
 
 def _result(divs: list[tuple[str, str]], word_count: int = 1000) -> JudgeResult:
@@ -182,6 +193,34 @@ class MergePassesTests(unittest.TestCase):
         refs = {d.extrait_reference for d in merged.divergences}
         self.assertIn("stable", refs)
         self.assertNotIn("flaky", refs)
+
+
+class RunJudgeCliTests(unittest.TestCase):
+    def _corpus(self, root: Path) -> None:
+        (root / "ground_truth").mkdir()
+        (root / "transcriptions" / "sample").mkdir(parents=True)
+        (root / "ground_truth" / "sample.txt").write_text("la vérité de référence", encoding="utf-8")
+        (root / "transcriptions" / "sample" / "albert__m.txt").write_text("une hypothèse", encoding="utf-8")
+
+    def test_all_failures_raise_instead_of_exit_zero(self) -> None:
+        # Tous les couples échouent (clé invalide) -> ne doit pas réussir
+        # silencieusement avec un rapport vide, mais lever JudgeCliError.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._corpus(root)
+            with self.assertRaises(JudgeCliError):
+                run_judge(
+                    "sample",
+                    ground_truth_dir=root / "ground_truth",
+                    transcriptions_dir=root / "transcriptions",
+                    client=_FailingClient(),
+                    progress=False,
+                )
+
+    def test_output_to_directory_raises_clean_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(JudgeCliError):
+                write_or_print_report("# rapport", output_path=Path(tmp))
 
 
 if __name__ == "__main__":

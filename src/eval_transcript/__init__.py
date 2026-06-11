@@ -24,7 +24,12 @@ from eval_transcript.elevenlabs import (
     elevenlabs_transcription_text,
 )
 from eval_transcript.judge import DEFAULT_JUDGE_MODEL, JudgeError
-from eval_transcript.judge_cli import JudgeCliError, render_markdown as render_judge_markdown, run_judge
+from eval_transcript.judge_cli import (
+    JudgeCliError,
+    render_markdown as render_judge_markdown,
+    run_judge,
+    write_or_print_report as write_or_print_judge_report,
+)
 from eval_transcript.manifest import DEFAULT_MANIFEST_PATH, discover_samples, render_manifest
 from eval_transcript.omlx import DEFAULT_API_KEY_ENV as OMLX_API_KEY_ENV, OmlxClient, OmlxError
 from eval_transcript.scaleway import (
@@ -194,6 +199,8 @@ def main() -> None:
             return
 
         if args.command == "judge":
+            if args.output is not None and args.output.is_dir():
+                raise JudgeCliError(f"Output path must be a file, not a directory: {args.output}")
             results = run_judge(
                 args.sample_id,
                 ground_truth_dir=resolve_ground_truth_dir(args),
@@ -202,11 +209,7 @@ def main() -> None:
                 passes=args.passes,
             )
             report = render_judge_markdown(results, include_g1=not args.hide_g1)
-            if args.output is not None:
-                args.output.write_text(report, encoding="utf-8")
-                print(f"Rapport écrit : {args.output}")
-            else:
-                print(report)
+            write_or_print_judge_report(report, output_path=args.output)
             return
 
         if args.command == "data" and args.data_command == "migrate":
