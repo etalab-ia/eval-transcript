@@ -123,6 +123,31 @@ uv run eval-transcript omlx transcribe data/audio/sample.wav \
   --save
 ```
 
+### WhisperX (local, the Transcript production engine)
+
+Transcript (La Suite's meeting transcription) runs **WhisperX** in production: faster-whisper `large-v2` behind a pyannote VAD, served as an OpenAI-compatible HTTP server ([`suitenumerique/meet-whisperx`](https://github.com/suitenumerique/meet-whisperx)). For benchmarking you only need the two components that affect WER — the **ASR model + VAD** — so alignment and diarization can be skipped (they relocate words and add speaker labels, but do not change the transcript text).
+
+WhisperX is not a CLI dependency; it is declared as an optional `whisperx` dependency group in `pyproject.toml`, pinned to the production version (`whisperx==3.8.5`, as used by `suitenumerique/meet-whisperx`). CTranslate2 is **CPU-only on Apple Silicon** (no Metal) and requires **Python < 3.13**, so run the group with `--python 3.12`.
+
+Save this minimal transcription script as `transcribe.py` — VAD = pyannote default (same as prod), no alignment/diarization:
+
+```python
+import sys, whisperx
+model = whisperx.load_model("large-v2", device="cpu", compute_type="float32", language="fr")
+audio = whisperx.load_audio(sys.argv[1])
+result = model.transcribe(audio, batch_size=16)
+print(" ".join(s["text"].strip() for s in result["segments"]))
+```
+
+Save the output as a benchmark column under `data/transcriptions/<audio-stem>/whisperx__large-v2.txt`:
+
+```bash
+uv run --python 3.12 --group whisperx python transcribe.py data/audio/sample.mp3 \
+  > data/transcriptions/sample/whisperx__large-v2.txt
+```
+
+Use `large-v3` to test a model upgrade. WhisperX's default VAD model is hosted by the WhisperX maintainers and loads without a Hugging Face token; pass `vad_method="silero"` to `load_model` if you hit any pyannote gating.
+
 ### Kyutai STT (local, via the oMLX provider)
 
 [Kyutai STT](https://kyutai.org/stt) ships `kyutai/stt-1b-en_fr` (English/French, with built-in semantic VAD) and `kyutai/stt-2.6b-en`. It is **local-only**: there is no hosted or OpenAI-compatible HTTP endpoint. File transcription runs through the `moshi` (PyTorch) or `moshi_mlx` (Apple Silicon) packages, and the only server Kyutai ships is a Rust WebSocket streaming server. See [`kyutai-labs/delayed-streams-modeling`](https://github.com/kyutai-labs/delayed-streams-modeling) for the inference scripts.
@@ -137,6 +162,23 @@ uv run eval-transcript omlx transcribe data/audio/sample.mp3 \
 ```
 
 This reuses the existing oMLX OpenAI-compatible client, so no Kyutai-specific provider code is needed. Use `kyutai/stt-1b-en_fr` for French.
+
+#### Native long-form (Apple Silicon, MLX)
+
+For long files, transcribe directly with the `stt_from_file_mlx.py` script from [`kyutai-labs/delayed-streams-modeling`](https://github.com/kyutai-labs/delayed-streams-modeling) (`scripts/`). It uses the MLX Mimi tokenizer and runs the streaming model end to end, letting the model pick segment boundaries with its built-in semantic VAD — no manual chunking. The script is not part of this repo; download it first, then run it with `uv run --script` (its PEP 723 header pins `moshi_mlx`, so it runs in an isolated env):
+
+```bash
+curl -O https://raw.githubusercontent.com/kyutai-labs/delayed-streams-modeling/main/scripts/stt_from_file_mlx.py
+# Upstream declares --max-steps without type=int, so "8000" arrives as a string and
+# crashes in an MLX tensor shape. Patch it to an int before transcribing long files:
+perl -pi -e 's/--max-steps", default=4096/--max-steps", type=int, default=4096/' stt_from_file_mlx.py
+uv run --script stt_from_file_mlx.py data/audio/sample.mp3 --max-steps 8000
+```
+
+Notes:
+- The script appends ~2 s of zero padding, so set `--max-steps` to about `ceil((duration_seconds + 2) * 12.5)` plus a small margin (the default `4096` truncates around 5.5 min). It must be an integer — hence the `type=int` patch above; without it, `--max-steps 8000` is passed as a string and crashes.
+- Avoid `python -m moshi_mlx.run_inference` for long files: its `rustymimi` tokenizer caps around ~11 minutes of audio.
+- The transcript is printed on stdout after the `starting inference ...` line; redirect it and drop the leading log lines to build `data/transcriptions/<audio-stem>/kyutai-native__stt-1b-en_fr.txt`.
 
 ### ElevenLabs provider
 
