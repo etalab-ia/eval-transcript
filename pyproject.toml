@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "elevenlabs>=2.50.0",
     "httpx>=0.28.1",
+    "huggingface-hub>=0.24.0",
     "jiwer>=4.0.0",
     "python-dotenv>=1.2.2",
     "text2num>=2.4.0",

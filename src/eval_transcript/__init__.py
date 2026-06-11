@@ -43,6 +43,14 @@ from eval_transcript.scoring_cli import (
     write_or_print_score_output,
 )
 from eval_transcript.transcriptions import TranscriptionOutput, print_transcription_output, transcription_text
+from eval_transcript.huggingface import (
+    DEFAULT_API_KEY_ENV as HF_API_KEY_ENV,
+    DEFAULT_AUDIO_DIR as HF_AUDIO_DIR,
+    DEFAULT_DATASET_REPO as HF_DEFAULT_DATASET_REPO,
+    DEFAULT_GROUND_TRUTH_DIR as HF_GROUND_TRUTH_DIR,
+    HuggingFaceClient,
+    HuggingFaceError,
+)
 
 
 DEPRECATED_SOURCE_TRUTH_FLAG_MESSAGE = (
@@ -56,6 +64,19 @@ def resolve_ground_truth_dir(args: argparse.Namespace) -> Path:
         print(DEPRECATED_SOURCE_TRUTH_FLAG_MESSAGE, file=sys.stderr)
         return source_truth_dir
     return args.ground_truth_dir
+
+
+def _build_huggingface_client(args: argparse.Namespace, *, require_token: bool) -> HuggingFaceClient:
+    audio_dir = getattr(args, "audio_dir", HF_AUDIO_DIR)
+    ground_truth_dir = getattr(args, "ground_truth_dir", HF_GROUND_TRUTH_DIR)
+    return HuggingFaceClient(
+        dataset_repo=getattr(args, "repo", HF_DEFAULT_DATASET_REPO),
+        org=getattr(args, "org", None),
+        token=getattr(args, "token", None),
+        audio_dir=audio_dir,
+        ground_truth_dir=ground_truth_dir,
+        require_token=require_token,
+    )
 
 
 def main() -> None:
@@ -170,6 +191,36 @@ def main() -> None:
     omlx_transcribe.add_argument("--json", action="store_true", help="Print the raw transcription JSON response")
     omlx_transcribe.add_argument("--save", action="store_true", help="Write text output to data/transcriptions/<audio-stem>/omlx__<model>.txt")
     omlx_transcribe.add_argument("--output-dir", type=Path, default=None, help="Directory for saved text output; defaults to data/transcriptions and implies --save")
+
+    huggingface = subparsers.add_parser("huggingface", help="Interact with the Hugging Face Hub dataset store (corpus only; no ASR inference)")
+    huggingface_subparsers = huggingface.add_subparsers(dest="huggingface_command")
+    hf_dataset = huggingface_subparsers.add_parser("dataset", help="Read or write the benchmark corpus dataset")
+    hf_dataset_subparsers = hf_dataset.add_subparsers(dest="hf_dataset_command")
+
+    hf_dataset_ls = hf_dataset_subparsers.add_parser("ls", help="List sample IDs in the configured corpus repo")
+    hf_dataset_ls.add_argument("--token", default=None, help=f"Hugging Face token; defaults to ${HF_API_KEY_ENV} (anonymous when public)")
+    hf_dataset_ls.add_argument("--org", default=None, help="Hugging Face org/namespace; defaults to $HF_ORG")
+    hf_dataset_ls.add_argument("--repo", default=HF_DEFAULT_DATASET_REPO, help=f"Dataset repo; defaults to ${HF_DEFAULT_DATASET_REPO}")
+    hf_dataset_ls.add_argument("--revision", default=None, help="Dataset revision to list")
+
+    hf_dataset_pull = hf_dataset_subparsers.add_parser("pull", help="Download corpus samples into data/audio and data/ground_truth")
+    hf_dataset_pull.add_argument("--samples", default=None, help="Comma-separated sample IDs to pull")
+    hf_dataset_pull.add_argument("--all", action="store_true", help="Pull every sample in the configured repo")
+    hf_dataset_pull.add_argument("--force", action="store_true", help="Overwrite local files even if they already exist")
+    hf_dataset_pull.add_argument("--token", default=None, help=f"Hugging Face token; defaults to ${HF_API_KEY_ENV}")
+    hf_dataset_pull.add_argument("--org", default=None, help="Hugging Face org/namespace; defaults to $HF_ORG")
+    hf_dataset_pull.add_argument("--repo", default=HF_DEFAULT_DATASET_REPO, help=f"Dataset repo; defaults to ${HF_DEFAULT_DATASET_REPO}")
+    hf_dataset_pull.add_argument("--revision", default=None, help="Dataset revision to pull")
+    hf_dataset_pull.add_argument("--audio-dir", type=Path, default=HF_AUDIO_DIR, help="Directory to write audio files")
+    hf_dataset_pull.add_argument("--ground-truth-dir", type=Path, default=HF_GROUND_TRUTH_DIR, help="Directory to write ground truth files")
+
+    hf_dataset_push = hf_dataset_subparsers.add_parser("push", help="Upload local audio + ground truth files to the configured repo (private-only)")
+    hf_dataset_push.add_argument("--message", default="Update eval-transcript corpus", help="Commit message used for the upload")
+    hf_dataset_push.add_argument("--token", default=None, help=f"Hugging Face token; defaults to ${HF_API_KEY_ENV}")
+    hf_dataset_push.add_argument("--org", default=None, help="Hugging Face org/namespace; defaults to $HF_ORG")
+    hf_dataset_push.add_argument("--repo", default=HF_DEFAULT_DATASET_REPO, help=f"Dataset repo; defaults to ${HF_DEFAULT_DATASET_REPO}")
+    hf_dataset_push.add_argument("--audio-dir", type=Path, default=HF_AUDIO_DIR, help="Source directory for audio files")
+    hf_dataset_push.add_argument("--ground-truth-dir", type=Path, default=HF_GROUND_TRUTH_DIR, help="Source directory for ground truth files")
 
     args = parser.parse_args()
 
@@ -334,7 +385,33 @@ def main() -> None:
                 )
             )
             return
-    except (FileNotFoundError, DataMigrationError, ScoringError, AlbertError, ScalewayError, ElevenLabsError, OmlxError, httpx.HTTPError) as exc:
+
+        if args.command == "huggingface" and args.huggingface_command == "dataset" and args.hf_dataset_command == "ls":
+            client = _build_huggingface_client(args, require_token=False)
+            for sample_id in client.list_samples(revision=args.revision):
+                print(sample_id)
+            return
+
+        if args.command == "huggingface" and args.huggingface_command == "dataset" and args.hf_dataset_command == "pull":
+            client = _build_huggingface_client(args, require_token=False)
+            sample_ids = [item for item in (args.samples or "").split(",") if item] if args.samples else None
+            result = client.pull(
+                sample_ids=sample_ids,
+                all_samples=args.all,
+                force=args.force,
+                revision=args.revision,
+            )
+            print(f"Pulled {len(result.samples)} sample(s) from {result.repo_id}")
+            for sample in result.samples:
+                print(sample.sample_id)
+            return
+
+        if args.command == "huggingface" and args.huggingface_command == "dataset" and args.hf_dataset_command == "push":
+            client = _build_huggingface_client(args, require_token=True)
+            client.push(message=args.message)
+            print(f"Uploaded local corpus to {client.repo_id}")
+            return
+    except (FileNotFoundError, DataMigrationError, HuggingFaceError, ScoringError, AlbertError, ScalewayError, ElevenLabsError, OmlxError, httpx.HTTPError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
@@ -352,5 +429,7 @@ def main() -> None:
         elevenlabs.print_help()
     elif args.command == "omlx":
         omlx.print_help()
+    elif args.command == "huggingface":
+        huggingface.print_help()
     else:
         parser.print_help()

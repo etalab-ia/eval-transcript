@@ -87,5 +87,49 @@ class ScoringCliPathFlagTests(unittest.TestCase):
         self.assertIn("--source-truth-dir is deprecated", stderr.getvalue())
 
 
+class HuggingFaceCliTests(unittest.TestCase):
+    def test_huggingface_dataset_ls_prints_sample_ids(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            with patch("eval_transcript.HuggingFaceClient") as client_class:
+                client = client_class.return_value
+                client.repo_id = "team/corpus"
+                client.list_samples.return_value = ["sample-a", "sample-b"]
+
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+                argv = [
+                    "eval-transcript",
+                    "huggingface",
+                    "dataset",
+                    "ls",
+                ]
+                with chdir(root), patch.dict(os.environ, {}, clear=True), patch.object(sys, "argv", argv), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                    eval_transcript.main()
+
+            client_class.assert_called_once()
+            self.assertEqual(stdout.getvalue().splitlines(), ["sample-a", "sample-b"])
+            self.assertEqual(stderr.getvalue(), "")
+
+    def test_huggingface_dataset_push_requires_token(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            argv = [
+                "eval-transcript",
+                "huggingface",
+                "dataset",
+                "push",
+                "--audio-dir",
+                str(root / "audio"),
+                "--ground-truth-dir",
+                str(root / "ground_truth"),
+            ]
+            with chdir(root), patch.dict(os.environ, {}, clear=True), patch("eval_transcript.load_dotenv"), patch.object(sys, "argv", argv), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as stderr:
+                with self.assertRaises(SystemExit):
+                    eval_transcript.main()
+            self.assertIn("HF_TOKEN", stderr.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
