@@ -297,3 +297,25 @@ Use `--format markdown` or `--format csv` for report-friendly output, and `--out
 `data/manifest.md` uses Markdown with YAML frontmatter to index samples, ground-truth paths, generated outputs, and placeholder metadata such as language, duration, domain, runtime, and real-time factor.
 
 Ground-truth transcripts are matched to a sample by basename and may be either `.txt` or `.md` (for example `data/ground_truth/sample.txt` for `data/audio/sample.wav`).
+
+### Judging semantic severity (LLM-as-a-judge)
+
+WER counts wrong words but is blind to whether an error *changes the meaning* of the meeting (a negation added, a name hallucinated, a whole passage lost). The `judge` command adds a qualitative layer on top of WER: an LLM served by Albert API compares each generated transcript to the ground truth and reports only the divergences that change the sense, graded on a severity scale.
+
+```bash
+# Judge every transcript of one sample
+uv run eval-transcript judge sample --output data/reports/judge_sample.md
+
+# Judge the whole corpus
+uv run eval-transcript judge
+```
+
+Severity scale (G0 cosmetic differences are out of scope, already neutralized by WER):
+
+- **G3 — critical**: meaning/polarity inversion (negation added or removed, success↔failure, rhetorical question turned into an assertion), hallucination of a fact/number/person, or `effondrement` (a whole passage lost or replaced by gibberish).
+- **G2 — major**: substantial information lost, or a key term garbled into a different referent.
+- **G1 — minor**: still recoverable from context (a misspelled but identifiable name, a deformed technical term).
+
+Each finding quotes both sides **verbatim**; a finding whose extract is not a literal substring of both the ground truth and the hypothesis is flagged `non-verbatim` (guards against the judge hallucinating divergences). The report ranks transcripts by a continuous **gravity score** (`G1×1, G2×2, G3×6, effondrement×12`) normalized per 1000 reference words, so audios of different difficulty stay comparable; a coarse verdict (`fidele` / `alterations_mineures` / `sens_degrade` / `inexploitable`) is derived from that score.
+
+Options: `--judge-model` (default `mistral-medium-2508`; the rubric calibration is tuned for it — `openai/gpt-oss-120b` under-detects polarity inversions), `--passes N` for self-consistency (keeps only G3 findings stable across passes), `--hide-g1` to drop minor findings from the detail, `--output PATH` to write the Markdown report. Requires `ALBERT_API_KEY`.
