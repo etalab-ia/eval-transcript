@@ -10,6 +10,7 @@ from eval_transcript.judge import (
     JudgeResult,
     _extract_json,
     _is_verbatim,
+    _merge_passes,
     _verdict_from,
     parse_judge_response,
 )
@@ -44,6 +45,11 @@ class VerbatimGuardrailTests(unittest.TestCase):
 
     def test_empty_extract_is_not_verbatim(self) -> None:
         self.assertFalse(_is_verbatim("", "du texte"))
+
+    def test_french_ligatures_match_their_expansion(self) -> None:
+        # « bœuf » dans la référence doit matcher « boeuf » dans l'hypothèse.
+        self.assertTrue(_is_verbatim("le bœuf et la sœur", "alors le boeuf et la soeur"))
+        self.assertTrue(_is_verbatim("ex æquo", "ils sont ex aequo"))
 
 
 class ScoringTests(unittest.TestCase):
@@ -110,6 +116,28 @@ class ParseJudgeResponseTests(unittest.TestCase):
         self.assertEqual(len(result.divergences), 1)
         self.assertFalse(result.divergences[0].verbatim_ok)
 
+    def test_effondrement_is_exempt_from_hypothesis_verbatim(self) -> None:
+        # Le marqueur "[passage perdu]" n'est pas dans l'hypothèse : un
+        # effondrement dont la référence est verbatim ne doit PAS être flaggé.
+        payload = {
+            "divergences": [
+                {
+                    "extrait_reference": "tout le monde se souvient de lui",
+                    "extrait_hypothese": "[passage perdu]",
+                    "type": "effondrement",
+                    "gravite": "G3",
+                    "impact_sens": "passage entier perdu",
+                }
+            ]
+        }
+        result = self._parse(
+            payload,
+            reference="alors tout le monde se souvient de lui salut",
+            hypothesis="tu vois parce que merci",
+        )
+        self.assertEqual(len(result.divergences), 1)
+        self.assertTrue(result.divergences[0].verbatim_ok)
+
     def test_drops_invalid_severity(self) -> None:
         payload = {"divergences": [{"extrait_reference": "a", "extrait_hypothese": "b", "gravite": "G9"}]}
         result = self._parse(payload, reference="a", hypothesis="b")
@@ -119,6 +147,41 @@ class ParseJudgeResponseTests(unittest.TestCase):
         result = self._parse({"divergences": []}, reference="un deux trois quatre", hypothesis="x")
         self.assertEqual(result.reference_word_count, 4)
         self.assertEqual(result.verdict, "fidele")
+
+
+class MergePassesTests(unittest.TestCase):
+    def _res(self, divs: list[Divergence]) -> JudgeResult:
+        return JudgeResult("s", "p", "m", "judge", "", divs, 1000)
+
+    def test_stable_g3_missed_in_first_pass_is_kept(self) -> None:
+        # G3 "alpha" vu dans les 3 passes ; G3 "beta" vu seulement aux passes 2
+        # et 3 (manqué à la passe 0). Les deux sont stables (>50 %) et doivent
+        # survivre, même si "beta" est absent de la passe de référence.
+        alpha = Divergence("alpha", "a", "inversion_polarite", "G3", "")
+        beta = Divergence("beta", "b", "inversion_polarite", "G3", "")
+        results = [
+            self._res([alpha]),
+            self._res([alpha, beta]),
+            self._res([alpha, beta]),
+        ]
+        merged = _merge_passes(results)
+        refs = {d.extrait_reference for d in merged.divergences}
+        self.assertIn("alpha", refs)
+        self.assertIn("beta", refs)
+
+    def test_unstable_g3_is_dropped(self) -> None:
+        # G3 vu dans une seule passe sur trois (<50 %) -> écarté.
+        stable = Divergence("stable", "s", "inversion_polarite", "G3", "")
+        flaky = Divergence("flaky", "f", "inversion_polarite", "G3", "")
+        results = [
+            self._res([stable, flaky]),
+            self._res([stable]),
+            self._res([stable]),
+        ]
+        merged = _merge_passes(results)
+        refs = {d.extrait_reference for d in merged.divergences}
+        self.assertIn("stable", refs)
+        self.assertNotIn("flaky", refs)
 
 
 if __name__ == "__main__":

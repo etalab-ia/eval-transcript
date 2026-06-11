@@ -205,6 +205,10 @@ def _normalize(text: str) -> str:
     text = unicodedata.normalize("NFD", text)
     text = "".join(c for c in text if unicodedata.category(c) != "Mn")
     text = text.lower()
+    # Les ligatures FR ne sont pas décomposées par NFD : les expanser avant le
+    # filtre ASCII, sinon « bœuf » devient « b uf » et casse la comparaison
+    # avec une hypothèse qui écrit « boeuf ».
+    text = text.replace("œ", "oe").replace("æ", "ae")
     text = re.sub(r"[^a-z0-9]+", " ", text)
     return text.strip()
 
@@ -272,12 +276,18 @@ def parse_judge_response(
             gravite = str(item.get("gravite", "")).strip().upper()
             if gravite not in SEVERITIES:
                 continue
-            verbatim_ok = _is_verbatim(ref_extract, reference) and _is_verbatim(hyp_extract, hypothesis)
+            div_type = str(item.get("type", "")).strip() or "?"
+            # Pour un effondrement, le côté hypothèse est volontairement un
+            # marqueur ("[passage perdu]") absent du texte : on n'exige le
+            # verbatim que sur la référence, sinon faux flag systématique.
+            verbatim_ok = _is_verbatim(ref_extract, reference) and (
+                div_type == COLLAPSE_TYPE or _is_verbatim(hyp_extract, hypothesis)
+            )
             divergences.append(
                 Divergence(
                     extrait_reference=ref_extract,
                     extrait_hypothese=hyp_extract,
-                    type=str(item.get("type", "")).strip() or "?",
+                    type=div_type,
                     gravite=gravite,
                     impact_sens=str(item.get("impact_sens", "")).strip(),
                     verbatim_ok=verbatim_ok,
@@ -333,7 +343,11 @@ def judge_pair(
 
     passes > 1 : self-consistency simple — on relance N fois et on ne garde que
     les divergences G3 stables (extrait de référence vu dans >50 % des passes).
+    À température 0, les passes seraient déterministes (donc identiques et
+    inutiles) : on relève automatiquement la température dans ce cas.
     """
+    if passes > 1 and temperature == 0.0:
+        temperature = 0.7
     client = client or AlbertClient()
     messages = build_messages(reference, hypothesis, provider=provider, model=model)
 
@@ -380,12 +394,29 @@ def _merge_passes(results: list[JudgeResult]) -> JudgeResult:
             g3_keys[k] = g3_keys.get(k, 0) + 1
     stable_g3 = {k for k, c in g3_keys.items() if c > threshold}
 
+    # Représentant de chaque G3 stable, collecté sur TOUTES les passes (pas
+    # seulement la passe 0) : un G3 stable manqué à la passe 0 mais présent
+    # aux passes suivantes doit quand même être conservé.
+    stable_g3_divs: dict[str, Divergence] = {}
+    for r in results:
+        for d in r.divergences:
+            if d.gravite != "G3":
+                continue
+            norm_ref = _normalize(d.extrait_reference)
+            if norm_ref in stable_g3 and norm_ref not in stable_g3_divs:
+                stable_g3_divs[norm_ref] = d
+
     merged: list[Divergence] = []
     seen_keys: set[str] = set()
-    for d in base.divergences:
+    for d in stable_g3_divs.values():
         key = (d.gravite, _normalize(d.extrait_reference))
-        if d.gravite == "G3" and _normalize(d.extrait_reference) not in stable_g3:
+        seen_keys.add(key)
+        merged.append(d)
+    # Les divergences non-G3 restent celles de la passe de référence.
+    for d in base.divergences:
+        if d.gravite == "G3":
             continue
+        key = (d.gravite, _normalize(d.extrait_reference))
         if key in seen_keys:
             continue
         seen_keys.add(key)
