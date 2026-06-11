@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+import json
+import unittest
+
+from eval_transcript.judge import (
+    EFFONDREMENT_WEIGHT,
+    SEVERITY_WEIGHTS,
+    Divergence,
+    JudgeResult,
+    _extract_json,
+    _is_verbatim,
+    _verdict_from,
+    parse_judge_response,
+)
+
+
+def _result(divs: list[tuple[str, str]], word_count: int = 1000) -> JudgeResult:
+    """Construit un JudgeResult à partir de couples (gravité, type)."""
+    divergences = [Divergence("", "", typ, grav, "") for grav, typ in divs]
+    result = JudgeResult("s", "p", "m", "judge", "", divergences, word_count)
+    result.verdict = _verdict_from(result)
+    return result
+
+
+class ExtractJsonTests(unittest.TestCase):
+    def test_parses_plain_object(self) -> None:
+        self.assertEqual(_extract_json('{"divergences": []}'), {"divergences": []})
+
+    def test_tolerates_fenced_json_block(self) -> None:
+        content = 'Voici le résultat :\n```json\n{"divergences": []}\n```\n'
+        self.assertEqual(_extract_json(content), {"divergences": []})
+
+    def test_strips_text_around_object(self) -> None:
+        self.assertEqual(_extract_json('blabla {"a": 1} fin'), {"a": 1})
+
+
+class VerbatimGuardrailTests(unittest.TestCase):
+    def test_substring_match_is_case_and_accent_insensitive(self) -> None:
+        self.assertTrue(_is_verbatim("Premier Ministre", "le premier ministre veut"))
+
+    def test_absent_extract_is_not_verbatim(self) -> None:
+        self.assertFalse(_is_verbatim("phrase inventée", "le texte réel"))
+
+    def test_empty_extract_is_not_verbatim(self) -> None:
+        self.assertFalse(_is_verbatim("", "du texte"))
+
+
+class ScoringTests(unittest.TestCase):
+    def test_weights_sum_correctly(self) -> None:
+        result = _result([("G3", "inversion_polarite"), ("G2", "perte_info"), ("G1", "nom_deforme")])
+        expected = SEVERITY_WEIGHTS["G3"] + SEVERITY_WEIGHTS["G2"] + SEVERITY_WEIGHTS["G1"]
+        self.assertEqual(result.weighted_score, expected)
+
+    def test_effondrement_uses_heavy_weight_not_g3(self) -> None:
+        result = _result([("G3", "effondrement")])
+        self.assertEqual(result.weighted_score, EFFONDREMENT_WEIGHT)
+        self.assertEqual(result.collapse_count, 1)
+
+    def test_score_normalized_per_1k_words(self) -> None:
+        result = _result([("G2", "perte_info")], word_count=2000)
+        self.assertAlmostEqual(result.score_per_1k, SEVERITY_WEIGHTS["G2"] * 1000.0 / 2000)
+
+
+class VerdictTests(unittest.TestCase):
+    def test_perfect_transcript_is_fidele(self) -> None:
+        self.assertEqual(_result([]).verdict, "fidele")
+
+    def test_single_local_collapse_is_not_inexploitable(self) -> None:
+        # Un effondrement isolé sur un transcript par ailleurs propre reste "sens_degrade"
+        # (plancher), pas "inexploitable".
+        self.assertEqual(_result([("G3", "effondrement")]).verdict, "sens_degrade")
+
+    def test_multiple_collapses_push_to_inexploitable(self) -> None:
+        result = _result([("G3", "effondrement")] * 3 + [("G2", "perte_info")] * 5, word_count=1500)
+        self.assertEqual(result.verdict, "inexploitable")
+
+    def test_collapse_floor_blocks_alterations_mineures(self) -> None:
+        # Score faible mais effondrement présent -> ne peut pas être "alterations_mineures".
+        result = _result([("G3", "effondrement")], word_count=5000)
+        self.assertIn(result.verdict, ("sens_degrade", "inexploitable"))
+        self.assertNotIn(result.verdict, ("fidele", "alterations_mineures"))
+
+
+class ParseJudgeResponseTests(unittest.TestCase):
+    def _parse(self, payload: dict, reference: str, hypothesis: str) -> JudgeResult:
+        return parse_judge_response(
+            json.dumps(payload),
+            reference=reference,
+            hypothesis=hypothesis,
+            sample_id="s",
+            provider="p",
+            model="m",
+            judge_model="judge",
+        )
+
+    def test_keeps_divergence_and_flags_non_verbatim(self) -> None:
+        payload = {
+            "divergences": [
+                {
+                    "extrait_reference": "absent de la ref",
+                    "extrait_hypothese": "Donald",
+                    "type": "hallucination_personne",
+                    "gravite": "G3",
+                    "impact_sens": "nom inventé",
+                }
+            ]
+        }
+        result = self._parse(payload, reference="Nat sera content", hypothesis="Donald sera content")
+        self.assertEqual(len(result.divergences), 1)
+        self.assertFalse(result.divergences[0].verbatim_ok)
+
+    def test_drops_invalid_severity(self) -> None:
+        payload = {"divergences": [{"extrait_reference": "a", "extrait_hypothese": "b", "gravite": "G9"}]}
+        result = self._parse(payload, reference="a", hypothesis="b")
+        self.assertEqual(result.divergences, [])
+
+    def test_reference_word_count_is_computed(self) -> None:
+        result = self._parse({"divergences": []}, reference="un deux trois quatre", hypothesis="x")
+        self.assertEqual(result.reference_word_count, 4)
+        self.assertEqual(result.verdict, "fidele")
+
+
+if __name__ == "__main__":
+    unittest.main()

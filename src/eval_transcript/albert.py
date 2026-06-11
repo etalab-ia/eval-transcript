@@ -84,6 +84,44 @@ class AlbertClient:
             files = {"file": (audio_path.name, audio_file)}
             return self._request_json("POST", "/audio/transcriptions", data=form, files=files)
 
+    def chat_completion(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"model": model, "messages": messages}
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if response_format is not None:
+            payload["response_format"] = response_format
+        return self._request_json("POST", "/chat/completions", json=payload)
+
+    def chat_completion_text(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> str:
+        data = self.chat_completion(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            response_format=response_format,
+        )
+        choices = data.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise AlbertError(f"No choices in chat completion response: {data!r}")
+        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, str):
+            raise AlbertError(f"No message content in chat completion response: {data!r}")
+        return content
+
     def _request_json(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         with httpx.Client(timeout=self.timeout, headers=self.headers) as client:

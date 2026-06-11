@@ -23,6 +23,8 @@ from eval_transcript.elevenlabs import (
     ElevenLabsError,
     elevenlabs_transcription_text,
 )
+from eval_transcript.judge import DEFAULT_JUDGE_MODEL, JudgeError
+from eval_transcript.judge_cli import JudgeCliError, render_markdown as render_judge_markdown, run_judge
 from eval_transcript.manifest import DEFAULT_MANIFEST_PATH, discover_samples, render_manifest
 from eval_transcript.omlx import DEFAULT_API_KEY_ENV as OMLX_API_KEY_ENV, OmlxClient, OmlxError
 from eval_transcript.scaleway import (
@@ -171,6 +173,16 @@ def main() -> None:
     omlx_transcribe.add_argument("--save", action="store_true", help="Write text output to data/transcriptions/<audio-stem>/omlx__<model>.txt")
     omlx_transcribe.add_argument("--output-dir", type=Path, default=None, help="Directory for saved text output; defaults to data/transcriptions and implies --save")
 
+    judge = subparsers.add_parser("judge", help="LLM-as-a-judge: gravité sémantique des transcripts (Albert API)")
+    judge.add_argument("sample_id", nargs="?", default=None, help="Sample ID; omettre pour juger tout le corpus")
+    judge.add_argument("--ground-truth-dir", type=Path, default=SCORING_DEFAULT_GROUND_TRUTH_DIR, help="Directory containing ground truth .md or .txt files")
+    judge.add_argument("--source-truth-dir", type=Path, default=None, help=argparse.SUPPRESS)
+    judge.add_argument("--transcriptions-dir", type=Path, default=SCORING_DEFAULT_TRANSCRIPTIONS_DIR, help="Directory containing generated transcript outputs")
+    judge.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL, help=f"Modèle juge servi par Albert API (défaut: {DEFAULT_JUDGE_MODEL})")
+    judge.add_argument("--passes", type=int, default=1, help="Nombre de passes self-consistency (>1 ne garde que les G3 stables)")
+    judge.add_argument("--output", type=Path, default=None, help="Écrire le rapport markdown ici au lieu de stdout")
+    judge.add_argument("--hide-g1", action="store_true", help="Masquer les écarts mineurs (G1) dans le détail")
+
     args = parser.parse_args()
 
     try:
@@ -179,6 +191,22 @@ def main() -> None:
             args.manifest.parent.mkdir(parents=True, exist_ok=True)
             args.manifest.write_text(manifest_text, encoding="utf-8")
             print(args.manifest)
+            return
+
+        if args.command == "judge":
+            results = run_judge(
+                args.sample_id,
+                ground_truth_dir=resolve_ground_truth_dir(args),
+                transcriptions_dir=args.transcriptions_dir,
+                judge_model=args.judge_model,
+                passes=args.passes,
+            )
+            report = render_judge_markdown(results, include_g1=not args.hide_g1)
+            if args.output is not None:
+                args.output.write_text(report, encoding="utf-8")
+                print(f"Rapport écrit : {args.output}")
+            else:
+                print(report)
             return
 
         if args.command == "data" and args.data_command == "migrate":
@@ -334,7 +362,7 @@ def main() -> None:
                 )
             )
             return
-    except (FileNotFoundError, DataMigrationError, ScoringError, AlbertError, ScalewayError, ElevenLabsError, OmlxError, httpx.HTTPError) as exc:
+    except (FileNotFoundError, DataMigrationError, ScoringError, JudgeCliError, JudgeError, AlbertError, ScalewayError, ElevenLabsError, OmlxError, httpx.HTTPError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
