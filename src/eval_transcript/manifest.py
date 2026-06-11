@@ -110,9 +110,9 @@ def ground_truth_path_from_manifest_entry(entry: Mapping[str, object]) -> Path |
     still be consumed by future commands that parse the manifest.
     """
 
-    value = entry.get("ground_truth_path")
-    if value:
-        return Path(str(value))
+    if "ground_truth_path" in entry:
+        value = entry["ground_truth_path"]
+        return Path(str(value)) if value else None
 
     legacy_value = entry.get("source_truth_path")
     if legacy_value:

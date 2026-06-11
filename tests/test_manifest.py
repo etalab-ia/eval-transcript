@@ -59,6 +59,18 @@ class ManifestGroundTruthTests(unittest.TestCase):
         self.assertEqual(second, Path("data/source_truth/other.md"))
         self.assertEqual(stderr.getvalue().count("source_truth_path manifest key is deprecated"), 1)
 
+    def test_explicit_empty_ground_truth_path_does_not_fall_back_to_legacy_key(self) -> None:
+        manifest._legacy_source_truth_path_key_warning_printed = False
+        stderr = StringIO()
+
+        with redirect_stderr(stderr):
+            ground_truth_path = ground_truth_path_from_manifest_entry(
+                {"ground_truth_path": "", "source_truth_path": "data/source_truth/sample.md"}
+            )
+
+        self.assertIsNone(ground_truth_path)
+        self.assertEqual(stderr.getvalue(), "")
+
 
 if __name__ == "__main__":
     unittest.main()
