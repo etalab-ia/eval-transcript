@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import hashlib
 import os
+import shutil
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,10 +13,12 @@ DEFAULT_ORG_ENV = "HF_ORG"
 DEFAULT_DATASET_REPO = "eval-transcript-corpus"
 DEFAULT_AUDIO_DIR = Path("data/audio")
 DEFAULT_GROUND_TRUTH_DIR = Path("data/ground_truth")
-DEFAULT_HASH_ALGORITHM = "sha256"
 AUDIO_FILE_EXTENSIONS = {".aac", ".aiff", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".webm"}
 GROUND_TRUTH_FILE_EXTENSIONS = {".md", ".txt"}
 DATASET_REPO_TYPE = "dataset"
+AUDIO_REPO_SUBDIR = "audio"
+GROUND_TRUTH_REPO_SUBDIR = "ground_truth"
+CORPUS_REPO_SUBDIRS = frozenset({AUDIO_REPO_SUBDIR, GROUND_TRUTH_REPO_SUBDIR})
 
 
 class HuggingFaceError(RuntimeError):
@@ -28,22 +30,13 @@ class HfApiLike(Protocol):
 
     The protocol keeps the unit tests free of a hard dependency on the real
     huggingface_hub package; the production wiring passes through HfApi
-    directly.
+    directly. ``hf_hub_download`` is documented as a module-level function in
+    huggingface_hub, so it does not belong on this Protocol.
     """
 
     def dataset_info(self, repo_id: str, *, repo_type: str = ..., revision: str | None = None) -> Any: ...
 
     def list_repo_files(self, repo_id: str, *, repo_type: str = ..., revision: str | None = None) -> list[str]: ...
-
-    def hf_hub_download(
-        self,
-        repo_id: str,
-        filename: str,
-        *,
-        repo_type: str = ...,
-        revision: str | None = None,
-        token: str | None = None,
-    ) -> str: ...
 
     def create_repo(
         self,
@@ -55,15 +48,14 @@ class HfApiLike(Protocol):
         exist_ok: bool = ...,
     ) -> Any: ...
 
-    def upload_file(
+    def create_commit(
         self,
         *,
-        path_or_fileobj: str | Path | bytes,
-        path_in_repo: str,
         repo_id: str,
+        operations: Sequence[Any],
+        commit_message: str,
         repo_type: str = ...,
         token: str | None = None,
-        commit_message: str | None = None,
     ) -> Any: ...
 
 
@@ -84,10 +76,9 @@ class PullResult:
 class HuggingFaceClient:
     """Client for the eval-transcript benchmark corpus on Hugging Face Hub.
 
-    The corpus is a single HF Dataset with one parquet file per sample. Each row
-    carries the audio bytes, the ground-truth text, and a handful of metadata
-    fields. This client is read/write only: ASR inference stays with the
-    oMLX, Albert, Scaleway, and ElevenLabs providers.
+    The corpus is a single HF Dataset with files laid out under ``audio/<id>.<ext>``
+    and ``ground_truth/<id>.<ext>``. This client is read/write only: ASR
+    inference stays with the oMLX, Albert, Scaleway, and ElevenLabs providers.
     """
 
     def __init__(
@@ -174,7 +165,6 @@ class HuggingFaceClient:
         for sample_id in wanted:
             pulled.append(
                 self._pull_one(
-                    api,
                     sample_id=sample_id,
                     files=files,
                     force=force,
@@ -185,30 +175,27 @@ class HuggingFaceClient:
 
     def _pull_one(
         self,
-        api: HfApiLike,
         *,
         sample_id: str,
         files: Sequence[str],
         force: bool,
         revision: str | None,
     ) -> PulledSample:
-        audio_path = self._write_parquet_field(
-            api,
+        audio_path = self._write_one(
             sample_id=sample_id,
             files=files,
-            kind="audio",
             target_dir=self.audio_dir,
             extensions=AUDIO_FILE_EXTENSIONS,
+            repo_subdir=AUDIO_REPO_SUBDIR,
             force=force,
             revision=revision,
         )
-        ground_truth_path = self._write_parquet_field(
-            api,
+        ground_truth_path = self._write_one(
             sample_id=sample_id,
             files=files,
-            kind="ground_truth",
             target_dir=self.ground_truth_dir,
             extensions=GROUND_TRUTH_FILE_EXTENSIONS,
+            repo_subdir=GROUND_TRUTH_REPO_SUBDIR,
             force=force,
             revision=revision,
         )
@@ -218,36 +205,28 @@ class HuggingFaceClient:
             ground_truth_path=ground_truth_path,
         )
 
-    def _write_parquet_field(
+    def _write_one(
         self,
-        api: HfApiLike,
         *,
         sample_id: str,
         files: Sequence[str],
-        kind: str,
         target_dir: Path,
         extensions: set[str],
+        repo_subdir: str,
         force: bool,
         revision: str | None,
     ) -> Path | None:
-        candidates = _candidate_paths_for_field(files, sample_id, extensions)
+        candidates = _candidate_paths_for_field(files, sample_id, repo_subdir, extensions)
         if not candidates:
             return None
-        # Pick the first matching file; multiple variants for the same sample
-        # are an upstream data error and surface as an error during push.
         path_in_repo = candidates[0]
         local_path = target_dir / Path(path_in_repo).name
         if local_path.exists() and not force:
             return local_path
         local_path.parent.mkdir(parents=True, exist_ok=True)
-        downloaded = api.hf_hub_download(
-            self.repo_id,
-            path_in_repo,
-            repo_type=DATASET_REPO_TYPE,
-            revision=revision,
-            token=self.token,
-        )
-        local_path.write_bytes(Path(downloaded).read_bytes())
+        downloaded = _download_module_level(self.repo_id, path_in_repo, revision, self.token)
+        # shutil.copy streams the file to keep memory low for large audio assets.
+        shutil.copy(downloaded, local_path)
         return local_path
 
     def push(
@@ -258,18 +237,33 @@ class HuggingFaceClient:
         """Upload the local audio + ground_truth directories to the corpus repo.
 
         Refuses to push to a public dataset repo. The target repo is created
-        with ``private=True`` if it does not exist.
+        with ``private=True`` if it does not exist. All files are uploaded in a
+        single atomic commit.
         """
 
         api = self._get_api()
         self._ensure_private_repo(api)
-        self._upload_local_files(api, message=message)
+        operations = self._collect_commit_operations()
+        if operations:
+            api.create_commit(
+                repo_id=self.repo_id,
+                operations=operations,
+                commit_message=message,
+                repo_type=DATASET_REPO_TYPE,
+                token=self.token,
+            )
 
     def _ensure_private_repo(self, api: HfApiLike) -> None:
         try:
             info = api.dataset_info(self.repo_id, repo_type=DATASET_REPO_TYPE)
-        except Exception:
-            api.create_repo(self.repo_id, repo_type=DATASET_REPO_TYPE, private=True, token=self.token, exist_ok=True)
+        except _repository_not_found_error():
+            api.create_repo(
+                self.repo_id,
+                repo_type=DATASET_REPO_TYPE,
+                private=True,
+                token=self.token,
+                exist_ok=True,
+            )
             return
         is_private = bool(getattr(info, "private", True))
         if not is_private:
@@ -278,61 +272,98 @@ class HuggingFaceClient:
                 "Benchmark corpora must stay private."
             )
 
-    def _upload_local_files(self, api: HfApiLike, *, message: str) -> None:
-        for path in sorted(self.audio_dir.glob("*")):
-            if not path.is_file() or path.suffix.lower() not in AUDIO_FILE_EXTENSIONS:
-                continue
-            api.upload_file(
-                path_or_fileobj=path,
-                path_in_repo=f"audio/{path.name}",
-                repo_id=self.repo_id,
-                repo_type=DATASET_REPO_TYPE,
-                token=self.token,
-                commit_message=message,
-            )
-        for path in sorted(self.ground_truth_dir.glob("*")):
-            if not path.is_file() or path.suffix.lower() not in GROUND_TRUTH_FILE_EXTENSIONS:
-                continue
-            api.upload_file(
-                path_or_fileobj=path,
-                path_in_repo=f"ground_truth/{path.name}",
-                repo_id=self.repo_id,
-                repo_type=DATASET_REPO_TYPE,
-                token=self.token,
-                commit_message=message,
-            )
+    def _collect_commit_operations(self) -> list[Any]:
+        try:
+            from huggingface_hub import CommitOperationAdd
+        except ImportError as exc:  # pragma: no cover - exercised only in production
+            raise HuggingFaceError(
+                "huggingface_hub is required for live HF Hub operations"
+            ) from exc
+
+        operations: list[Any] = []
+        for directory, repo_subdir, extensions in (
+            (self.audio_dir, AUDIO_REPO_SUBDIR, AUDIO_FILE_EXTENSIONS),
+            (self.ground_truth_dir, GROUND_TRUTH_REPO_SUBDIR, GROUND_TRUTH_FILE_EXTENSIONS),
+        ):
+            for path in sorted(directory.glob("*")):
+                if not path.is_file() or path.suffix.lower() not in extensions:
+                    continue
+                operations.append(
+                    CommitOperationAdd(
+                        path_in_repo=f"{repo_subdir}/{path.name}",
+                        path_or_fileobj=path,
+                    )
+                )
+        return operations
 
 
 def _sample_ids_from_repo_files(files: Iterable[str]) -> list[str]:
     ids: set[str] = set()
     for path in files:
         stem, suffix = _split_stem_suffix(path)
-        if stem and suffix in AUDIO_FILE_EXTENSIONS or suffix in GROUND_TRUTH_FILE_EXTENSIONS:
+        repo_subdir = _repo_subdir(path)
+        if not stem or repo_subdir is None:
+            continue
+        extensions = (
+            AUDIO_FILE_EXTENSIONS if repo_subdir == AUDIO_REPO_SUBDIR else GROUND_TRUTH_FILE_EXTENSIONS
+        )
+        if suffix in extensions:
             ids.add(stem)
     return sorted(ids)
 
 
-def _candidate_paths_for_field(files: Iterable[str], sample_id: str, extensions: set[str]) -> list[str]:
+def _candidate_paths_for_field(
+    files: Iterable[str], sample_id: str, repo_subdir: str, extensions: set[str]
+) -> list[str]:
     matches: list[str] = []
     for path in files:
         stem, suffix = _split_stem_suffix(path)
-        if stem != sample_id or suffix not in extensions:
+        if stem != sample_id or suffix not in extensions or _repo_subdir(path) != repo_subdir:
             continue
         matches.append(path)
     return matches
 
 
 def _split_stem_suffix(path: str) -> tuple[str, str]:
-    name = path.rsplit("/", 1)[-1]
-    dot_index = name.rfind(".")
-    if dot_index <= 0:
-        return name, ""
-    return name[:dot_index], name[dot_index:]
+    name = Path(path).name
+    p = Path(name)
+    return p.stem, p.suffix
 
 
-def file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(65536), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+def _repo_subdir(path: str) -> str | None:
+    parts = path.split("/")
+    if len(parts) < 2:
+        return None
+    subdir = parts[0]
+    return subdir if subdir in CORPUS_REPO_SUBDIRS else None
+
+
+def _download_module_level(
+    repo_id: str, filename: str, revision: str | None, token: str | None
+) -> str:
+    try:
+        from huggingface_hub import hf_hub_download  # type: ignore[import-not-found]
+    except ImportError as exc:  # pragma: no cover - exercised only in production
+        raise HuggingFaceError(
+            "huggingface_hub is required for live HF Hub operations"
+        ) from exc
+    return hf_hub_download(
+        repo_id=repo_id,
+        filename=filename,
+        repo_type=DATASET_REPO_TYPE,
+        revision=revision,
+        token=token,
+    )
+
+
+def _repository_not_found_error() -> type[BaseException]:
+    """Return huggingface_hub.errors.RepositoryNotFoundError, or Exception as a safe fallback.
+
+    Falling back keeps the unit tests independent of the real package while
+    still scoping the production catch to a specific HF error class.
+    """
+    try:
+        from huggingface_hub.errors import RepositoryNotFoundError
+    except ImportError:  # pragma: no cover - exercised only in production
+        return Exception
+    return RepositoryNotFoundError

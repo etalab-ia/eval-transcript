@@ -10,7 +10,8 @@ from eval_transcript.huggingface import (
     HuggingFaceClient,
     HuggingFaceError,
     PullResult,
-    file_sha256,
+    _download_module_level,
+    _repository_not_found_error,
 )
 
 
@@ -19,46 +20,43 @@ class FakeInfo:
         self.private = private
 
 
+class FakeOperation:
+    def __init__(self, path_in_repo: str, path_or_fileobj: Path) -> None:
+        self.path_in_repo = path_in_repo
+        self.path_or_fileobj = path_or_fileobj
+
+
 class FakeHfApi:
     def __init__(
         self,
         *,
         files: list[str] | None = None,
-        downloads: dict[str, str] | None = None,
         info: FakeInfo | None = None,
         create_repo_calls: list[dict[str, object]] | None = None,
-        upload_calls: list[dict[str, object]] | None = None,
+        commit_calls: list[dict[str, object]] | None = None,
+        dataset_info_error: BaseException | None = None,
     ) -> None:
         self.files = files or []
-        self.downloads = downloads or {}
         self.info = info
+        self.dataset_info_error = dataset_info_error
         self.create_repo_calls = create_repo_calls or []
-        self.upload_calls = upload_calls or []
+        self.commit_calls = commit_calls or []
         self.infos: list[dict[str, object]] = []
 
     def list_repo_files(self, repo_id: str, *, repo_type: str, revision: str | None = None) -> list[str]:
         return list(self.files)
 
-    def hf_hub_download(
-        self,
-        repo_id: str,
-        filename: str,
-        *,
-        repo_type: str,
-        revision: str | None = None,
-        token: str | None = None,
-    ) -> str:
-        if filename not in self.downloads:
-            raise HuggingFaceError(f"Missing fixture download: {filename}")
-        return self.downloads[filename]
-
     def dataset_info(self, repo_id: str, *, repo_type: str, revision: str | None = None) -> FakeInfo:
+        if self.dataset_info_error is not None:
+            raise self.dataset_info_error
         if self.info is None:
-            raise HuggingFaceError("repo not found")
+            raise _repository_not_found_error()()
         self.infos.append({"repo_id": repo_id, "repo_type": repo_type, "revision": revision})
         return self.info
 
-    def create_repo(self, repo_id: str, *, repo_type: str, private: bool, token: str | None, exist_ok: bool) -> None:
+    def create_repo(
+        self, repo_id: str, *, repo_type: str, private: bool, token: str | None, exist_ok: bool
+    ) -> None:
         self.create_repo_calls.append(
             {
                 "repo_id": repo_id,
@@ -69,26 +67,37 @@ class FakeHfApi:
             }
         )
 
-    def upload_file(
+    def create_commit(
         self,
         *,
-        path_or_fileobj: Path,
-        path_in_repo: str,
         repo_id: str,
+        operations: list[FakeOperation],
+        commit_message: str,
         repo_type: str,
         token: str | None = None,
-        commit_message: str | None = None,
     ) -> None:
-        self.upload_calls.append(
+        self.commit_calls.append(
             {
-                "path": str(path_or_fileobj),
-                "path_in_repo": path_in_repo,
                 "repo_id": repo_id,
+                "operations": [(op.path_in_repo, str(op.path_or_fileobj)) for op in operations],
+                "commit_message": commit_message,
                 "repo_type": repo_type,
                 "token": token,
-                "commit_message": commit_message,
             }
         )
+
+
+def _patch_download(payloads: dict[str, str]) -> patch:
+    def fake_download(repo_id: str, filename: str, revision: str | None, token: str | None) -> str:
+        if filename not in payloads:
+            raise HuggingFaceError(f"Missing fixture download: {filename}")
+        return payloads[filename]
+
+    return patch.object(
+        __import__("eval_transcript.huggingface", fromlist=["huggingface"]),
+        "_download_module_level",
+        side_effect=fake_download,
+    )
 
 
 class ConstructorTests(unittest.TestCase):
@@ -123,10 +132,31 @@ class ConstructorTests(unittest.TestCase):
 
 class ListSamplesTests(unittest.TestCase):
     def test_lists_sample_ids(self) -> None:
-        api = FakeHfApi(files=["audio/sample-a.wav", "ground_truth/sample-a.md", "audio/sample-b.wav"])
+        api = FakeHfApi(
+            files=[
+                "audio/sample-a.wav",
+                "ground_truth/sample-a.md",
+                "audio/sample-b.wav",
+            ]
+        )
         with patch.dict("os.environ", {"HF_TOKEN": "tok"}, clear=True):
             client = HuggingFaceClient(api=api)
         self.assertEqual(client.list_samples(), ["sample-a", "sample-b"])
+
+    def test_ignores_files_outside_corpus_folders(self) -> None:
+        api = FakeHfApi(
+            files=[
+                "README.md",
+                ".gitignore",
+                "audio/sample-a.wav",
+                "ground_truth/sample-a.md",
+                "audio/.gitkeep",
+                "training_log.txt",
+            ]
+        )
+        with patch.dict("os.environ", {"HF_TOKEN": "tok"}, clear=True):
+            client = HuggingFaceClient(api=api)
+        self.assertEqual(client.list_samples(), ["sample-a"])
 
 
 class PullTests(unittest.TestCase):
@@ -143,18 +173,15 @@ class PullTests(unittest.TestCase):
             }
             Path(downloads["audio/sample-a.wav"]).write_bytes(b"RIFF")
             Path(downloads["ground_truth/sample-a.md"]).write_text("bonjour", encoding="utf-8")
-            api = FakeHfApi(
-                files=["audio/sample-a.wav", "ground_truth/sample-a.md"],
-                downloads=downloads,
-            )
-            with patch.dict("os.environ", {}, clear=True):
+            api = FakeHfApi(files=["audio/sample-a.wav", "ground_truth/sample-a.md"])
+            with _patch_download(downloads), patch.dict("os.environ", {}, clear=True):
                 client = HuggingFaceClient(
                     token="tok",
                     audio_dir=audio_dir,
                     ground_truth_dir=ground_truth_dir,
                     api=api,
                 )
-            result = client.pull(sample_ids=["sample-a"])
+                result = client.pull(sample_ids=["sample-a"])
 
             self.assertIsInstance(result, PullResult)
             self.assertEqual(result.repo_id, DEFAULT_DATASET_REPO)
@@ -166,6 +193,39 @@ class PullTests(unittest.TestCase):
             self.assertEqual((audio_dir / "sample-a.wav").read_bytes(), b"RIFF")
             self.assertEqual((ground_truth_dir / "sample-a.md").read_text(encoding="utf-8"), "bonjour")
 
+    def test_pull_streams_with_shutil_copy(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audio_dir = root / "audio"
+            ground_truth_dir = root / "ground_truth"
+            audio_dir.mkdir()
+            ground_truth_dir.mkdir()
+            src = root / "src-audio"
+            src.write_bytes(b"RIFF")
+            api = FakeHfApi(files=["audio/sample-a.wav"])
+
+            def fake_copy(source: str, destination: str) -> str:
+                # Mirror shutil.copy so post-conditions hold.
+                Path(destination).write_bytes(Path(source).read_bytes())
+                return destination
+
+            with _patch_download({"audio/sample-a.wav": str(src)}), patch.dict(
+                "os.environ", {}, clear=True
+            ), patch("eval_transcript.huggingface.shutil.copy", side_effect=fake_copy) as mock_copy:
+                client = HuggingFaceClient(
+                    token="tok",
+                    audio_dir=audio_dir,
+                    ground_truth_dir=ground_truth_dir,
+                    api=api,
+                )
+                client.pull(sample_ids=["sample-a"])
+
+            self.assertEqual(mock_copy.call_count, 1)
+            (source, destination) = mock_copy.call_args.args
+            self.assertEqual(source, str(src))
+            self.assertEqual(Path(destination), audio_dir / "sample-a.wav")
+            self.assertEqual((audio_dir / "sample-a.wav").read_bytes(), b"RIFF")
+
     def test_pull_skips_existing_files_without_force(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -173,18 +233,27 @@ class PullTests(unittest.TestCase):
             audio_dir.mkdir()
             existing = audio_dir / "sample-a.wav"
             existing.write_bytes(b"OLD")
-            api = FakeHfApi(files=["audio/sample-a.wav"], downloads={})
-            with patch.dict("os.environ", {}, clear=True):
+            api = FakeHfApi(files=["audio/sample-a.wav"])
+            with _patch_download({}), patch.dict("os.environ", {}, clear=True):
                 client = HuggingFaceClient(
                     token="tok",
                     audio_dir=audio_dir,
                     ground_truth_dir=root / "ground_truth",
                     api=api,
                 )
-            result = client.pull(sample_ids=["sample-a"], force=False)
+                result = client.pull(sample_ids=["sample-a"], force=False)
 
             self.assertEqual(result.samples[0].audio_path, existing)
             self.assertEqual(existing.read_bytes(), b"OLD")
+
+    def test_pull_does_not_match_files_outside_corpus_folders(self) -> None:
+        api = FakeHfApi(
+            files=["audio/sample-a.wav", "ground_truth/sample-a.md", "README.md"]
+        )
+        with patch.dict("os.environ", {}, clear=True):
+            client = HuggingFaceClient(token="tok", api=api)
+        with self.assertRaisesRegex(HuggingFaceError, "not found"):
+            client.pull(sample_ids=["README"])
 
     def test_pull_all_missing_samples_raises(self) -> None:
         api = FakeHfApi(files=["audio/sample-a.wav"])
@@ -208,8 +277,45 @@ class PushTests(unittest.TestCase):
             client = HuggingFaceClient(token="tok", api=api)
         with self.assertRaisesRegex(HuggingFaceError, "Refusing to push to public dataset repo"):
             client.push()
+        self.assertEqual(api.commit_calls, [])
 
-    def test_push_uploads_local_files_to_existing_private_repo(self) -> None:
+    def test_push_creates_missing_private_repo_then_commits(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audio_dir = root / "audio"
+            ground_truth_dir = root / "ground_truth"
+            audio_dir.mkdir()
+            ground_truth_dir.mkdir()
+            (audio_dir / "sample-a.wav").write_bytes(b"RIFF")
+            (ground_truth_dir / "sample-a.md").write_text("bonjour", encoding="utf-8")
+            api = FakeHfApi(
+                dataset_info_error=_repository_not_found_error()("repo not found")
+            )
+            with patch.dict("os.environ", {}, clear=True):
+                client = HuggingFaceClient(
+                    token="tok",
+                    audio_dir=audio_dir,
+                    ground_truth_dir=ground_truth_dir,
+                    api=api,
+                )
+                client.push(message="initial upload")
+
+            self.assertEqual(len(api.create_repo_calls), 1)
+            self.assertTrue(api.create_repo_calls[0]["private"])
+            self.assertEqual(api.create_repo_calls[0]["repo_id"], client.repo_id)
+            self.assertTrue(api.create_repo_calls[0]["exist_ok"])
+
+            self.assertEqual(len(api.commit_calls), 1)
+            commit = api.commit_calls[0]
+            self.assertEqual(commit["commit_message"], "initial upload")
+            self.assertEqual(commit["repo_type"], "dataset")
+            self.assertEqual(commit["token"], "tok")
+            self.assertEqual(
+                sorted(op[0] for op in commit["operations"]),
+                ["audio/sample-a.wav", "ground_truth/sample-a.md"],
+            )
+
+    def test_push_uses_single_atomic_commit_for_existing_private_repo(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             audio_dir = root / "audio"
@@ -226,26 +332,26 @@ class PushTests(unittest.TestCase):
                     ground_truth_dir=ground_truth_dir,
                     api=api,
                 )
-            client.push(message="initial upload")
+                client.push()
 
-        upload_paths = sorted(call["path_in_repo"] for call in api.upload_calls)
+        self.assertEqual(api.create_repo_calls, [])
+        self.assertEqual(len(api.commit_calls), 1)
         self.assertEqual(
-            upload_paths,
+            [op[0] for op in api.commit_calls[0]["operations"]],
             ["audio/sample-a.wav", "ground_truth/sample-a.md"],
         )
-        self.assertEqual(api.create_repo_calls, [])
-        for call in api.upload_calls:
-            self.assertEqual(call["token"], "tok")
-            self.assertEqual(call["repo_type"], "dataset")
 
-    def test_push_creates_missing_private_repo(self) -> None:
+    def test_push_propagates_repository_not_found_as_create(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             audio_dir = root / "audio"
             ground_truth_dir = root / "ground_truth"
             audio_dir.mkdir()
             ground_truth_dir.mkdir()
-            api = FakeHfApi()
+            (audio_dir / "sample-a.wav").write_bytes(b"RIFF")
+            api = FakeHfApi(
+                dataset_info_error=_repository_not_found_error()("not found")
+            )
             with patch.dict("os.environ", {}, clear=True):
                 client = HuggingFaceClient(
                     token="tok",
@@ -253,22 +359,32 @@ class PushTests(unittest.TestCase):
                     ground_truth_dir=ground_truth_dir,
                     api=api,
                 )
-            client.push()
+                client.push()
 
         self.assertEqual(len(api.create_repo_calls), 1)
-        self.assertTrue(api.create_repo_calls[0]["private"])
-        self.assertEqual(api.create_repo_calls[0]["repo_id"], client.repo_id)
-        self.assertTrue(api.create_repo_calls[0]["exist_ok"])
+        self.assertEqual(len(api.commit_calls), 1)
+
+    def test_push_does_not_swallow_other_dataset_info_errors(self) -> None:
+        api = FakeHfApi(dataset_info_error=RuntimeError("auth failure"))
+        with patch.dict("os.environ", {}, clear=True):
+            client = HuggingFaceClient(token="tok", api=api)
+        with self.assertRaisesRegex(RuntimeError, "auth failure"):
+            client.push()
 
 
-class HashHelperTests(unittest.TestCase):
-    def test_file_sha256_matches_stdlib(self) -> None:
-        import hashlib
-
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "blob.bin"
-            path.write_bytes(b"eval-transcript")
-            self.assertEqual(file_sha256(path), hashlib.sha256(b"eval-transcript").hexdigest())
+class DownloadHelperTests(unittest.TestCase):
+    def test_module_level_hf_hub_download_is_used(self) -> None:
+        with patch("huggingface_hub.hf_hub_download") as module_level:
+            module_level.return_value = "/tmp/whatever"
+            result = _download_module_level("team/corpus", "audio/a.wav", None, "tok")
+        module_level.assert_called_once_with(
+            repo_id="team/corpus",
+            filename="audio/a.wav",
+            repo_type="dataset",
+            revision=None,
+            token="tok",
+        )
+        self.assertEqual(result, "/tmp/whatever")
 
 
 if __name__ == "__main__":
