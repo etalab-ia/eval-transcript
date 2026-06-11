@@ -221,6 +221,37 @@ uv run eval-transcript albert transcribe data/audio/sample.wav \
 The transcribe command prints text only by default. Use `--json` to print the raw response, or `--save` to write `data/transcriptions/<audio-stem>/albert__<model>.txt`.
 
 
+### Hugging Face dataset
+
+The benchmark corpus (audio + ground truth) can be stored in a single HF Dataset repo so it can be shared across machines and pulled by CI workers. Reads are anonymous when the repo is public; writes need a `HF_TOKEN`. The provider is read/write only — ASR inference is not exposed here (use the oMLX/Albert/Scaleway/ElevenLabs providers).
+
+Configure `.env`:
+
+```bash
+HF_TOKEN=hf_xxx
+HF_ORG=etalab-ia            # optional; defaults to the token user
+HF_DATASET_REPO=eval-transcript-corpus
+```
+
+Pull a few samples from a public corpus dataset into the local `data/audio/` and `data/ground_truth/` directories:
+
+```bash
+uv run eval-transcript huggingface dataset pull --samples sample-a,sample-b
+```
+
+Push the local corpus to the configured repo (creates the repo with `private=True` if it does not exist; refuses to push to a public repo):
+
+```bash
+uv run eval-transcript huggingface dataset push
+```
+
+List the available sample IDs without writing anything locally:
+
+```bash
+uv run eval-transcript huggingface dataset ls
+```
+
+
 ### Scaleway provider
 
 Scaleway Generative APIs expose Voxtral through an OpenAI-compatible chat completions endpoint. Set `SCW_SECRET_KEY` and `SCW_DEFAULT_PROJECT_ID`; the CLI derives the project-scoped Generative APIs URL from `SCW_DEFAULT_PROJECT_ID`. Both `scaleway models` and `scaleway transcribe` also accept `--api-key` and `--project-id` to override these without a `.env` (useful in a worktree or CI).
