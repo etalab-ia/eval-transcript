@@ -1,0 +1,94 @@
+name: Juge gravite (officiels)
+
+# LLM-as-a-judge : gravite semantique des transcripts (les ecarts qui CHANGENT le sens,
+# que le WER ne voit pas). 100 % API, zero audio. Decouple de la transcription : on tire
+# les transcripts deja produits depuis le dataset resultats, donc on peut RE-JUGER sans
+# re-payer la transcription (essayer un autre modele juge, plus de passes, le panel).
+#
+# Pre-requis : le code du juge doit etre sur main (PR #35 mergee), et le dataset resultats
+# doit contenir des transcripts (produits par le workflow bench-remote).
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "single (un juge, Albert/Mistral) ou panel (multi-juges + consensus)"
+        type: choice
+        options: [single, panel]
+        default: single
+      passes:
+        description: "Passes self-consistency (>1 ne retient que les G3 stables)"
+        default: "1"
+      push_results:
+        description: "Pousser le rapport vers AgentPublic/eval-stt-results (HF)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  judge:
+    runs-on: ubuntu-latest
+    env:
+      ALBERT_BASE_URL: https://albert.api.etalab.gouv.fr/v1
+      ALBERT_API_KEY: ${{ secrets.ALBERT_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      CORPUS: AgentPublic/eval-stt-officiels
+      RESULTS: AgentPublic/eval-stt-results
+      MODE: ${{ inputs.mode }}
+      PASSES: ${{ inputs.passes }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install projet
+        run: uv sync
+
+      - name: Pull references (corpus) + transcripts (resultats) depuis HF
+        run: |
+          mkdir -p data/ground_truth data/transcriptions
+          uvx --from "huggingface_hub[cli]" hf download "$CORPUS" \
+            --repo-type dataset --include "ground_truth/*" --local-dir hf-corpus
+          cp hf-corpus/ground_truth/* data/ground_truth/
+          uvx --from "huggingface_hub[cli]" hf download "$RESULTS" \
+            --repo-type dataset --include "transcriptions/*" --local-dir hf-results
+          cp -r hf-results/transcriptions/* data/transcriptions/ 2>/dev/null || true
+          echo "Refs: $(ls data/ground_truth/*.txt 2>/dev/null | wc -l) | transcripts: $(find data/transcriptions -name '*.txt' 2>/dev/null | wc -l)"
+
+      - name: Juge (gravite semantique)
+        run: |
+          set -uo pipefail
+          mkdir -p results/reports
+          REV="$(uvx --from huggingface_hub python -c "from huggingface_hub import HfApi; print(HfApi().dataset_info('$CORPUS').sha)")"
+          STAMP="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+          REPORT="results/reports/${STAMP}__gravite-${MODE}.md"
+          if [ "$MODE" = "panel" ]; then
+            uv run eval-transcript panel --passes "$PASSES" --output "$REPORT"
+          else
+            uv run eval-transcript judge --judge-provider albert --passes "$PASSES" --output "$REPORT"
+          fi
+          # Estampille la revision du corpus en tete de rapport (reproductibilite)
+          sed -i "1i <!-- corpus: $CORPUS @ $REV | mode: $MODE | passes: $PASSES -->" "$REPORT"
+          cat "$REPORT"
+
+      - name: Rapport vers HF
+        if: ${{ inputs.push_results }}
+        run: |
+          if [ -z "${HF_TOKEN:-}" ]; then
+            echo "HF_TOKEN absent -> push HF saute, artefacts uniquement"; exit 0
+          fi
+          uvx --from "huggingface_hub[cli]" hf upload "$RESULTS" results/reports reports \
+            --repo-type dataset --commit-message "Juge gravite $(date -u +%FT%TZ)" \
+            || echo "::warning::push HF du rapport a echoue"
+
+      - name: Artefacts (toujours)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: juge-gravite
+          path: results/**
