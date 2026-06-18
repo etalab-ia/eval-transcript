@@ -32,11 +32,8 @@ jobs:
       CORPUS: AgentPublic/eval-stt-officiels
       RESULTS: AgentPublic/eval-stt-results
       PROVIDERS_INPUT: ${{ inputs.providers }}
-      # Tous les audios visent < 10 min, donc sous la limite 30 min de Voxtral : pas de
-      # check de duree (plus de ffprobe). Seul cas restant : crise_energetique, ou Voxtral
-      # collapse sur un silence long de ~35 s -> skip explicite, a retirer une fois le
-      # corpus nettoye.
-      VOXTRAL_SILENCE_SKIP: "crise_energetique_aides_mai"
+      # Corpus 100 % < 10 min : tous les audios sont sous la limite 30 min de Voxtral,
+      # donc aucun skip (ni duree, ni silence). Voxtral tourne sur l'integralite du corpus.
     steps:
       - uses: actions/checkout@v4
 
@@ -49,7 +46,7 @@ jobs:
 
       - name: Pull corpus public depuis HF (lecture anonyme)
         run: |
-          uvx --from "huggingface_hub[cli]" hf download "$CORPUS" \
+          uvx --from huggingface_hub hf download "$CORPUS" \
             --repo-type dataset --local-dir hf-corpus
           mkdir -p data/audio data/ground_truth
           cp hf-corpus/audio/* data/audio/
@@ -68,9 +65,6 @@ jobs:
                   uv run eval-transcript albert transcribe "$audio" --language fr --timeout 900 --save \
                     || echo "::warning::albert a echoue sur $id" ;;
                 scaleway)
-                  if echo "$VOXTRAL_SILENCE_SKIP" | grep -qw "$id"; then
-                    echo "skip voxtral (silence long connu): $id"; continue
-                  fi
                   uv run eval-transcript scaleway transcribe "$audio" --language fr --timeout 900 --save \
                     || echo "::warning::voxtral a echoue sur $id" ;;
                 elevenlabs)
@@ -108,7 +102,7 @@ jobs:
           # contient que du public. Garde-fou implicite : aucune reunion interne ici.
           mkdir -p results/transcriptions
           cp -r data/transcriptions/* results/transcriptions/ 2>/dev/null || true
-          uvx --from "huggingface_hub[cli]" hf upload "$RESULTS" results . \
+          uvx --from huggingface_hub hf upload "$RESULTS" results . \
             --repo-type dataset --commit-message "CI run $(date -u +%FT%TZ)" \
             || echo "::warning::push HF des resultats a echoue"
 
