@@ -32,12 +32,10 @@ jobs:
       CORPUS: AgentPublic/eval-stt-officiels
       RESULTS: AgentPublic/eval-stt-results
       PROVIDERS_INPUT: ${{ inputs.providers }}
-      # Voxtral (Scaleway) : limite 30 min/fichier -> on saute au-dela de ~28 min (auto,
-      # via ffprobe). Quand un long sample repasse sous la limite, il est couvert sans
-      # toucher la CI. crise_energetique : collapse sur un silence long de ~35 s (cas
-      # connu) -> skip explicite. Exclusions TEMPORAIRES : le chunk VAD est a porter dans
-      # le provider scaleway (cf. reprise PR #36).
-      VOXTRAL_MAX_SECONDS: "1700"
+      # Tous les audios visent < 10 min, donc sous la limite 30 min de Voxtral : pas de
+      # check de duree (plus de ffprobe). Seul cas restant : crise_energetique, ou Voxtral
+      # collapse sur un silence long de ~35 s -> skip explicite, a retirer une fois le
+      # corpus nettoye.
       VOXTRAL_SILENCE_SKIP: "crise_energetique_aides_mai"
     steps:
       - uses: actions/checkout@v4
@@ -45,9 +43,6 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
-
-      - name: ffprobe (preinstalle sur ubuntu-latest ; repli si absent)
-        run: command -v ffprobe >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
 
       - name: Install projet
         run: uv sync
@@ -67,16 +62,12 @@ jobs:
           IFS=',' read -ra PROVIDERS <<< "$PROVIDERS_INPUT"
           for audio in data/audio/*.mp3; do
             id="$(basename "$audio" .mp3)"
-            dur="$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$audio" | cut -d. -f1)"
             for p in "${PROVIDERS[@]}"; do
               case "$p" in
                 albert)
                   uv run eval-transcript albert transcribe "$audio" --language fr --timeout 900 --save \
                     || echo "::warning::albert a echoue sur $id" ;;
                 scaleway)
-                  if [ "${dur:-0}" -gt "$VOXTRAL_MAX_SECONDS" ]; then
-                    echo "skip voxtral (> 28 min): $id"; continue
-                  fi
                   if echo "$VOXTRAL_SILENCE_SKIP" | grep -qw "$id"; then
                     echo "skip voxtral (silence long connu): $id"; continue
                   fi
