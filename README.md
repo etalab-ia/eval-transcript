@@ -399,3 +399,18 @@ Set these as repository secrets (Settings > Secrets and variables > Actions):
 ### Running
 
 Trigger from the Actions tab (Run workflow, branch `main`). The bench accepts a `providers` input (default `albert,scaleway`); the judge accepts `mode` (`single`/`panel`) and `passes`. Each run consumes billable API calls, so the workflows are manual by design. Outputs are also uploaded as workflow artifacts.
+
+### Pushing local transcripts to the results dataset
+
+The CI only covers the API models. Local models (WhisperX, Kyutai, Cohere via MLX) run on your machine; push their outputs to the results dataset so the WER and judge cover every model:
+
+```bash
+# Dry-run: show what would be pushed (and what is skipped)
+uv run eval-transcript results push --dry-run
+
+# Push for real (single commit); optionally filter by file name
+uv run eval-transcript results push
+uv run eval-transcript results push --include whisperx
+```
+
+Safety: the command derives the public allowlist from the **corpus** dataset (`ground_truth/<id>`) and uploads only transcripts whose sample is in it. Any local transcript for a sample absent from the public corpus (internal meeting, removed sample) is skipped, so private data never reaches the Hub. Override the repos with `--corpus` / `--results` (or `EVAL_CORPUS_REPO` / `EVAL_RESULTS_REPO`); pushing needs `HF_TOKEN` with write access.

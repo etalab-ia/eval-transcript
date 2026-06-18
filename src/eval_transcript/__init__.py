@@ -59,6 +59,13 @@ from eval_transcript.scoring_cli import (
     write_or_print_score_output,
 )
 from eval_transcript.transcriptions import TranscriptionOutput, print_transcription_output, transcription_text
+from eval_transcript.results import (
+    DEFAULT_CORPUS_REPO,
+    DEFAULT_RESULTS_REPO,
+    DEFAULT_TRANSCRIPTIONS_DIR as RESULTS_DEFAULT_TRANSCRIPTIONS_DIR,
+    ResultsClient,
+    ResultsError,
+)
 
 
 DEPRECATED_SOURCE_TRUTH_FLAG_MESSAGE = (
@@ -209,6 +216,20 @@ def main() -> None:
     panel.add_argument("--passes", type=int, default=1, help="Passes self-consistency PAR juge")
     panel.add_argument("--output", type=Path, default=None, help="Écrire le rapport markdown ici au lieu de stdout")
     panel.add_argument("--hide-g1", action="store_true", help="Masquer les écarts mineurs (G1) dans le détail du consensus")
+
+    results = subparsers.add_parser("results", help="Gérer le dataset de résultats (transcripts locaux -> Hugging Face)")
+    results_subparsers = results.add_subparsers(dest="results_command")
+    results_push = results_subparsers.add_parser(
+        "push",
+        help="Pousser les transcripts locaux vers le dataset de résultats (officiels uniquement)",
+    )
+    results_push.add_argument("--transcriptions-dir", type=Path, default=RESULTS_DEFAULT_TRANSCRIPTIONS_DIR, help="Dossier des transcripts locaux")
+    results_push.add_argument("--include", default=None, help="Ne garder que les fichiers dont le nom contient cette chaîne (ex: whisperx, kyutai, cohere)")
+    results_push.add_argument("--corpus", default=None, help=f"Dataset corpus (allowlist des officiels); défaut $EVAL_CORPUS_REPO ou {DEFAULT_CORPUS_REPO}")
+    results_push.add_argument("--results", dest="results_repo", default=None, help=f"Dataset résultats; défaut $EVAL_RESULTS_REPO ou {DEFAULT_RESULTS_REPO}")
+    results_push.add_argument("--token", default=None, help="Token Hugging Face write; défaut $HF_TOKEN")
+    results_push.add_argument("--message", default="Push local transcripts (officiels only)", help="Message de commit")
+    results_push.add_argument("--dry-run", action="store_true", help="Afficher le plan sans rien pousser")
 
     args = parser.parse_args()
 
@@ -422,7 +443,28 @@ def main() -> None:
                 )
             )
             return
-    except (FileNotFoundError, DataMigrationError, ScoringError, JudgeCliError, JudgeError, AlbertError, ScalewayError, ElevenLabsError, OmlxError, httpx.HTTPError) as exc:
+
+        if args.command == "results" and args.results_command == "push":
+            client = ResultsClient(
+                corpus_repo=args.corpus,
+                results_repo=args.results_repo,
+                token=args.token,
+            )
+            plan = client.plan(transcriptions_dir=args.transcriptions_dir, include=args.include)
+            print(f"Corpus public ({len(plan.officiels)} samples): {', '.join(plan.officiels)}")
+            print(f"À pousser : {len(plan.uploads)} fichier(s) vers {plan.results_repo}")
+            for u in plan.uploads:
+                print(f"  + {u.path_in_repo}")
+            if plan.skipped_samples:
+                print(f"Ignorés (hors corpus public): {', '.join(plan.skipped_samples)}")
+            if args.dry_run:
+                print("[dry-run] relancer sans --dry-run pour pousser.")
+                return
+            client.push(plan, message=args.message)
+            if plan.uploads:
+                print(f"Poussé {len(plan.uploads)} fichier(s) vers {plan.results_repo}")
+            return
+    except (FileNotFoundError, DataMigrationError, ScoringError, JudgeCliError, JudgeError, AlbertError, ScalewayError, ElevenLabsError, OmlxError, ResultsError, httpx.HTTPError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
@@ -440,5 +482,7 @@ def main() -> None:
         elevenlabs.print_help()
     elif args.command == "omlx":
         omlx.print_help()
+    elif args.command == "results":
+        results.print_help()
     else:
         parser.print_help()
