@@ -54,8 +54,10 @@ class ConsensusTests(unittest.TestCase):
         self.assertEqual(seuil, 2)  # majorité stricte de 3
         kept = {d.extrait_reference for d in merged.divergences if d.gravite == "G3"}
         self.assertEqual(kept, {"alpha", "beta"})  # gamma (1 juge) écarté
+        # counts ne référence que les G3 RETENUS au consensus, avec leur accord.
         self.assertEqual(counts["alpha"], 3)
-        self.assertEqual(counts["gamma"], 1)
+        self.assertEqual(counts["beta"], 2)
+        self.assertNotIn("gamma", counts)  # écarté -> pas dans counts
 
     def test_min_agree_override(self) -> None:
         results = [
@@ -78,6 +80,30 @@ class ConsensusTests(unittest.TestCase):
         self.assertEqual(seuil, 2)  # seuil sur le panel complet, pas sur n=1
         kept = {d.extrait_reference for d in merged.divergences if d.gravite == "G3"}
         self.assertEqual(kept, set())  # rien retenu : 1 juge < seuil 2
+
+    def test_overlap_matching_finds_agreement_on_different_spans(self) -> None:
+        # Deux juges pointent la même erreur mais citent des empans différents :
+        # le recouvrement doit les compter comme un accord (pas l'égalité stricte).
+        results = [
+            _result("j1", ["comme ça Nat sera content"]),
+            _result("j2", ["Nat sera content"]),
+        ]
+        merged, counts, _n, _seuil = consensus_for_transcript(results, panel_size=2)
+        kept = [d.extrait_reference for d in merged.divergences if d.gravite == "G3"]
+        self.assertEqual(len(kept), 1)
+        # Représentant = extrait le plus précis (le plus court).
+        self.assertEqual(kept[0], "Nat sera content")
+        self.assertEqual(counts["nat sera content"], 2)
+
+    def test_lower_severities_come_from_primary_judge(self) -> None:
+        # G1/G2 du consensus = ceux du 1er juge listé, pas une union des juges.
+        p = _result("primary", [])
+        p.divergences = [Divergence("ref-g2", "h", "perte_info", "G2", "x")]
+        other = _result("other", [])
+        other.divergences = [Divergence("autre-g2", "h", "perte_info", "G2", "y")]
+        merged, _counts, _n, _seuil = consensus_for_transcript([p, other], panel_size=2)
+        g2 = [d.extrait_reference for d in merged.divergences if d.gravite == "G2"]
+        self.assertEqual(g2, ["ref-g2"])  # uniquement le primaire
 
     def test_does_not_mutate_inputs(self) -> None:
         r1 = _result("j1", ["alpha"])

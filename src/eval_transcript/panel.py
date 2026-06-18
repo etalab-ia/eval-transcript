@@ -18,15 +18,16 @@ du premier juge listé — y mettre le juge calibré).
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from eval_transcript.albert import AlbertClient
 from eval_transcript.judge import (
     DEFAULT_JUDGE_MODEL,
     SEVERITIES,
+    Divergence,
     JudgeResult,
-    _merge_passes,
     _normalize,
+    _verdict_from,
 )
 from eval_transcript.judge_cli import run_judge
 from eval_transcript.openrouter import (
@@ -101,6 +102,38 @@ def run_panel(
     return out
 
 
+def _cluster_g3_by_overlap(results: list[JudgeResult]) -> list[dict]:
+    """Regroupe les G3 de plusieurs juges par RECOUVREMENT d'extrait de référence.
+
+    Deux juges signalent souvent la même erreur en citant des empans légèrement
+    différents (« Nat sera content » vs « comme ça Nat sera content ») : une égalité
+    stricte les compterait comme deux écarts distincts et ne verrait jamais l'accord.
+    On regroupe donc dès qu'un extrait normalisé en contient un autre (containment).
+
+    Chaque cluster : {judges: set d'indices de juges, divs: list de Divergence}.
+    """
+    clusters: list[dict] = []
+    for idx, r in enumerate(results):
+        for d in r.divergences:
+            if d.gravite != "G3":
+                continue
+            norm = _normalize(d.extrait_reference)
+            if not norm:
+                continue
+            target = None
+            for cl in clusters:
+                if any(norm in m or m in norm for m in cl["norms"]):
+                    target = cl
+                    break
+            if target is None:
+                target = {"norms": set(), "judges": set(), "divs": []}
+                clusters.append(target)
+            target["norms"].add(norm)
+            target["judges"].add(idx)
+            target["divs"].append(d)
+    return clusters
+
+
 def consensus_for_transcript(
     results: list[JudgeResult], *, panel_size: int, min_agree: int | None = None
 ) -> tuple[JudgeResult, dict[str, int], int, int]:
@@ -112,20 +145,45 @@ def consensus_for_transcript(
     les résultats présents : sinon, un transcript jugé par un seul juge verrait tous
     ses G3 « passer » le consensus (seuil 1/1), ce qui viderait le panel de son sens.
 
-    Renvoie (résultat fusionné, {ref_normalisée G3 -> nb de juges d'accord},
-    nb de juges ayant produit un résultat (couverture), seuil d'accord retenu).
-    Le seuil par défaut = majorité stricte du panel.
+    - **G3** : mis au vote. Un G3 est retenu s'il est signalé par ≥ seuil juges
+      DISTINCTS, l'accord étant établi par recouvrement d'extrait (cf.
+      `_cluster_g3_by_overlap`), pas par égalité stricte. Le représentant retenu
+      est l'extrait le plus précis (le plus court) du cluster.
+    - **G1/G2** : NON comparables entre juges (calibration propre à chacun), donc
+      pas mis au vote. On prend ceux du **juge primaire = 1er de `results`** (mettre
+      le juge calibré en tête). Choix explicite, pas un effet de bord.
+
+    Renvoie (résultat consensus, {ref_normalisée du représentant -> nb de juges
+    d'accord}, couverture = nb de juges présents, seuil retenu).
     """
     resolved = min_agree if min_agree is not None else (panel_size // 2 + 1)
     n = len(results)
+
+    consensus_g3: list[Divergence] = []
     counts: dict[str, int] = {}
-    for r in results:
-        for k in {_normalize(d.extrait_reference) for d in r.divergences if d.gravite == "G3"}:
-            counts[k] = counts.get(k, 0) + 1
-    # Copies : _merge_passes mute le 1er élément ; ne pas corrompre les
-    # résultats originaux réutilisés par le tableau de comparaison.
-    merged = _merge_passes([replace(r) for r in results], min_agree=resolved)
-    merged.judge_model = "panel"
+    for cl in _cluster_g3_by_overlap(results):
+        agree = len(cl["judges"])
+        if agree < resolved:
+            continue
+        # Représentant = extrait de référence le plus précis (le plus court).
+        rep = min(cl["divs"], key=lambda d: len(d.extrait_reference))
+        consensus_g3.append(rep)
+        counts[_normalize(rep.extrait_reference)] = agree
+
+    # G1/G2 du juge primaire (1er listé) ; Divergence est frozen -> partage sûr.
+    primary = results[0]
+    lower = [d for d in primary.divergences if d.gravite in ("G1", "G2")]
+
+    merged = JudgeResult(
+        sample_id=primary.sample_id,
+        provider=primary.provider,
+        model=primary.model,
+        judge_model="panel",
+        verdict="",
+        divergences=consensus_g3 + lower,
+        reference_word_count=primary.reference_word_count,
+    )
+    merged.verdict = _verdict_from(merged)
     return merged, counts, n, resolved
 
 

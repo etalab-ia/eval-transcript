@@ -247,6 +247,53 @@ class JudgePairErrorWrappingTests(unittest.TestCase):
         self.assertIn("OpenRouter", str(ctx.exception))
         self.assertNotIn("Albert", str(ctx.exception))
 
+    def test_falls_back_when_model_rejects_response_format(self) -> None:
+        # Un modèle qui refuse le JSON mode (400 response_format) doit déclencher
+        # un second appel SANS response_format, pas un échec.
+        calls: list[dict] = []
+
+        class _NoJsonMode:
+            provider_name = "OpenRouter"
+
+            def chat_completion_text(self, **kwargs):
+                calls.append(kwargs)
+                if "response_format" in kwargs and kwargs["response_format"]:
+                    raise AlbertError(
+                        "OpenRouter request failed: 400 Bad Request for / - "
+                        "response_format is not supported by this model"
+                    )
+                return '{"divergences": []}'
+
+        result = judge_pair(
+            reference="réf",
+            hypothesis="hyp",
+            sample_id="s",
+            provider="p",
+            model="m",
+            client=_NoJsonMode(),
+        )
+        self.assertEqual(len(calls), 2)  # 1er avec JSON mode (400), 2e sans
+        self.assertNotIn("response_format", calls[1])
+        self.assertEqual(result.divergences, [])
+
+    def test_does_not_retry_on_auth_error(self) -> None:
+        # Une 401 n'est PAS un rejet de response_format -> pas de retry, échec direct.
+        calls: list[dict] = []
+
+        class _Unauthorized:
+            provider_name = "OpenRouter"
+
+            def chat_completion_text(self, **kwargs):
+                calls.append(kwargs)
+                raise AlbertError("OpenRouter request failed: 401 Unauthorized for /")
+
+        with self.assertRaises(JudgeError):
+            judge_pair(
+                reference="r", hypothesis="h", sample_id="s",
+                provider="p", model="m", client=_Unauthorized(),
+            )
+        self.assertEqual(len(calls), 1)  # pas de retry
+
 
 if __name__ == "__main__":
     unittest.main()

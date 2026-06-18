@@ -327,6 +327,57 @@ def _verdict_from(result: JudgeResult) -> str:
     return verdict
 
 
+JSON_RESPONSE_FORMAT = {"type": "json_object"}
+# Indices, dans un message d'erreur, d'un rejet du paramètre `response_format`
+# (JSON mode non supporté par le modèle/route — fréquent via OpenRouter pour
+# certains modèles Gemini/Llama). On ne réessaie QUE sur une erreur client (4xx).
+_RESPONSE_FORMAT_4XX = ("400", "404", "415", "422")
+_RESPONSE_FORMAT_HINTS = (
+    "response_format",
+    "response format",
+    "json_object",
+    "json mode",
+    "json_schema",
+    "json schema",
+    "structured output",
+)
+
+
+def _is_response_format_error(exc: AlbertError) -> bool:
+    msg = str(exc).lower()
+    if not any(code in msg for code in _RESPONSE_FORMAT_4XX):
+        return False
+    return any(hint in msg for hint in _RESPONSE_FORMAT_HINTS)
+
+
+def _judge_completion(
+    client: AlbertClient,
+    judge_model: str,
+    messages: list[dict[str, str]],
+    temperature: float,
+) -> str:
+    """Un appel juge, en forçant le JSON mode, avec repli pour les modèles qui
+    rejettent `response_format`. `_extract_json` tolérant le texte libre et les
+    blocs ```json, on peut réessayer sans le paramètre plutôt que d'échouer.
+    Lève AlbertError (que `judge_pair` enveloppe en JudgeError)."""
+    try:
+        return client.chat_completion_text(
+            model=judge_model,
+            messages=messages,
+            temperature=temperature,
+            response_format=JSON_RESPONSE_FORMAT,
+        )
+    except AlbertError as exc:
+        if not _is_response_format_error(exc):
+            raise
+        # Modèle sans JSON mode : on relance sans `response_format`.
+        return client.chat_completion_text(
+            model=judge_model,
+            messages=messages,
+            temperature=temperature,
+        )
+
+
 def judge_pair(
     *,
     reference: str,
@@ -354,15 +405,10 @@ def judge_pair(
     results: list[JudgeResult] = []
     for _ in range(max(1, passes)):
         try:
-            content = client.chat_completion_text(
-                model=judge_model,
-                messages=messages,
-                temperature=temperature,
-                response_format={"type": "json_object"},
-            )
+            content = _judge_completion(client, judge_model, messages, temperature)
         except AlbertError as exc:
-            provider = getattr(client, "provider_name", "Albert API")
-            raise JudgeError(f"Appel juge {provider} échoué: {exc}") from exc
+            judge_provider = getattr(client, "provider_name", "Albert API")
+            raise JudgeError(f"Appel juge {judge_provider} échoué: {exc}") from exc
         results.append(
             parse_judge_response(
                 content,
