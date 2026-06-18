@@ -365,3 +365,37 @@ uv run eval-transcript panel \
 - `--consensus-min N` sets how many judges must agree (default: strict majority of the panel). **Lower-severity (G1/G2) findings in the consensus are taken from the first judge listed** (the primary/calibrated judge) — put `mistral-medium-2508` first; only G3 are put to a vote, since the rubric calibration is judge-specific.
 
 JSON output: the judge forces `response_format: json_object`. If a model (some OpenRouter routes) rejects that parameter, the call automatically retries without it — the parser tolerates fenced/free-form JSON — so JSON mode is an optimization, not a hard requirement.
+
+## Continuous integration (GitHub Actions)
+
+Two manual workflows (`workflow_dispatch`) run the benchmark in CI against the **public** corpus, so results can be produced without a local machine. Both pull the corpus anonymously from a Hugging Face dataset and push their outputs to a separate results dataset.
+
+| Workflow | File | What it does |
+| --- | --- | --- |
+| **Bench remote (officiels)** | `.github/workflows/bench-remote.yml` | Pulls the corpus, transcribes with the API-only models (Albert/Whisper, Voxtral via Scaleway, optionally ElevenLabs), scores the WER, and pushes transcripts plus the report. |
+| **Juge gravité (officiels)** | `.github/workflows/judge.yml` | Pulls references plus existing transcripts, runs the LLM-as-a-judge (`single` or `panel`), and pushes a semantic-severity report. Decoupled from transcription, so you can re-judge without re-transcribing. |
+
+Local-only models (WhisperX, Kyutai, Cohere via MLX) are **not** run in CI: they need a GPU or Apple MLX and would require a self-hosted runner.
+
+### Datasets
+
+| Dataset | Visibility | Content |
+| --- | --- | --- |
+| `AgentPublic/eval-stt-officiels` | public | corpus: `audio/<id>.mp3` and `ground_truth/<id>.txt` (official public speeches) |
+| `AgentPublic/eval-stt-results` | public | `transcriptions/<id>/<provider>__<model>.txt` and `reports/<date>__*.md` |
+
+Only **public** data lives on Hugging Face. Private recordings (for example internal meetings) are personal data and are **never** pushed there; they stay local. If private sources are added later, use a separate private dataset.
+
+### Required secrets
+
+Set these as repository secrets (Settings > Secrets and variables > Actions):
+
+- `ALBERT_API_KEY`: Albert API (Whisper transcription and the Mistral-Medium judge)
+- `SCW_SECRET_KEY`, `SCW_DEFAULT_PROJECT_ID`: Scaleway (Voxtral)
+- `OPENROUTER_API_KEY`: third-party judge for the `panel` mode
+- `HF_TOKEN`: Hugging Face token with write access to the AgentPublic results dataset
+- `ELEVENLABS_API_KEY`: optional, only if ElevenLabs is included
+
+### Running
+
+Trigger from the Actions tab (Run workflow, branch `main`). The bench accepts a `providers` input (default `albert,scaleway`); the judge accepts `mode` (`single`/`panel`) and `passes`. Each run consumes billable API calls, so the workflows are manual by design. Outputs are also uploaded as workflow artifacts.
