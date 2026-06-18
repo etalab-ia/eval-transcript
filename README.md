@@ -300,7 +300,7 @@ Ground-truth transcripts are matched to a sample by basename and may be either `
 
 ### Judging semantic severity (LLM-as-a-judge)
 
-WER counts wrong words but is blind to whether an error *changes the meaning* of the meeting (a negation added, a name hallucinated, a whole passage lost). The `judge` command adds a qualitative layer on top of WER: an LLM served by Albert API compares each generated transcript to the ground truth and reports only the divergences that change the sense, graded on a severity scale.
+WER counts wrong words but is blind to whether an error *changes the meaning* of the meeting (a negation added, a name hallucinated, a whole passage lost). The `judge` command adds a qualitative layer on top of WER: an LLM (served by Albert API, or a third-party model via OpenRouter) compares each generated transcript to the ground truth and reports only the divergences that change the sense, graded on a severity scale.
 
 ```bash
 # Judge every transcript of one sample
@@ -308,6 +308,11 @@ uv run eval-transcript judge sample --output data/reports/judge_sample.md
 
 # Judge the whole corpus
 uv run eval-transcript judge
+
+# Judge with a third-party model via OpenRouter (avoids a Mistral judge rating a
+# Mistral/Voxtral transcript); defaults to anthropic/claude-sonnet-4.5
+uv run eval-transcript judge --judge-provider openrouter
+uv run eval-transcript judge --judge-provider openrouter --judge-model openai/gpt-5
 ```
 
 Severity scale (G0 cosmetic differences are out of scope, already neutralized by WER):
@@ -318,4 +323,26 @@ Severity scale (G0 cosmetic differences are out of scope, already neutralized by
 
 Each finding quotes both sides **verbatim**; a finding whose extract is not a literal substring of both the ground truth and the hypothesis is flagged `non-verbatim` (guards against the judge hallucinating divergences). The report ranks transcripts by a continuous **gravity score** (`G1×1, G2×2, G3×6, effondrement×12`) normalized per 1000 reference words, so audios of different difficulty stay comparable; a coarse verdict (`fidele` / `alterations_mineures` / `sens_degrade` / `inexploitable`) is derived from that score.
 
-Options: `--judge-model` (default `mistral-medium-2508`; the rubric calibration is tuned for it — `openai/gpt-oss-120b` under-detects polarity inversions), `--passes N` for self-consistency (keeps only G3 findings stable across passes), `--hide-g1` to drop minor findings from the detail, `--output PATH` to write the Markdown report. Requires `ALBERT_API_KEY`.
+Options: `--judge-provider {albert,openrouter}` (default `albert`), `--judge-model` (default `mistral-medium-2508` on Albert — the rubric calibration is tuned for it, `openai/gpt-oss-120b` under-detects polarity inversions; default `anthropic/claude-sonnet-4.5` on OpenRouter), `--passes N` for self-consistency (keeps only G3 findings stable across passes), `--hide-g1` to drop minor findings from the detail, `--output PATH` to write the Markdown report.
+
+**Judge providers.** Albert requires `ALBERT_API_KEY`. OpenRouter requires `OPENROUTER_API_KEY` (OpenAI-compatible, same `/chat/completions` schema) and lets you pick a *third-party* judge — useful to remove the bias of a Mistral model judging a transcript produced by Mistral/Voxtral. Any model id from <https://openrouter.ai/models> works via `--judge-model` (e.g. `anthropic/claude-sonnet-4.5`, `openai/gpt-5`, `google/gemini-2.5-pro`). Caveat: the G1/G2/G3 rubric was calibrated against `mistral-medium-2508`; cross-judge gravity counts are not directly comparable — read findings, not raw totals.
+
+### Multi-judge panel (`panel`)
+
+Run several judges in one pass to **compare** them or to build a **consensus** that neutralizes a single judge's bias:
+
+```bash
+# Default panel: Albert/mistral + OpenRouter/claude — comparison table + consensus
+uv run eval-transcript panel --output data/reports/panel.md
+
+# Explicit judges (repeat --judge), unanimity required for a G3 to be kept
+uv run eval-transcript panel \
+  --judge albert:mistral-medium-2508 \
+  --judge openrouter:anthropic/claude-sonnet-4.5 \
+  --judge openrouter:openai/gpt-5 \
+  --consensus-min 2 --mode both
+```
+
+- `--judge PROVIDER[:MODEL]` (repeatable; model optional → provider default). Defaults to `albert` + `openrouter`.
+- `--mode {compare,consensus,both}` (default `both`). `compare` prints a side-by-side table (each judge's score /1k and G3 count per transcript, plus the max spread = disagreement signal). `consensus` keeps a G3 only when enough judges flag the **same reference extract**.
+- `--consensus-min N` sets how many judges must agree (default: strict majority). The consensus reuses the self-consistency merge logic. **Lower-severity (G1/G2) findings in the consensus come from the first judge listed** — put the calibrated judge (`mistral-medium-2508`) first. Only G3 are put to a vote, since the rubric calibration is judge-specific.

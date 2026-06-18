@@ -379,11 +379,22 @@ def judge_pair(
     return _merge_passes(results)
 
 
-def _merge_passes(results: list[JudgeResult]) -> JudgeResult:
+def _merge_passes(results: list[JudgeResult], *, min_agree: int | None = None) -> JudgeResult:
+    """Fusionne plusieurs JudgeResult du MÊME couple (réf, hyp).
+
+    Sert à deux usages structurellement identiques :
+    - self-consistency d'un seul juge (N passes), `min_agree=None` → majorité
+      stricte (un G3 vu dans > 50 % des passes est conservé) ;
+    - panel multi-juges (cf. `panel.py`), `min_agree=K` → un G3 est conservé
+      s'il est signalé par au moins K juges.
+
+    Les divergences non-G3 (G1/G2) proviennent du 1er résultat listé (`base`) :
+    leur calibration n'est pas comparable entre juges, donc on n'en fait pas le
+    consensus — d'où l'intérêt de lister le juge calibré (mistral) en premier.
+    """
     base = results[0]
     n = len(results)
-    threshold = n / 2.0
-    # G3 : ne garder que les stables (vus dans > 50 % des passes)
+    # G3 : ne garder que les stables (accord d'assez de passes / de juges)
     g3_keys: dict[str, int] = {}
     for r in results:
         seen: set[str] = set()
@@ -392,7 +403,11 @@ def _merge_passes(results: list[JudgeResult]) -> JudgeResult:
                 seen.add(_normalize(d.extrait_reference))
         for k in seen:
             g3_keys[k] = g3_keys.get(k, 0) + 1
-    stable_g3 = {k for k, c in g3_keys.items() if c > threshold}
+    if min_agree is not None:
+        stable_g3 = {k for k, c in g3_keys.items() if c >= min_agree}
+    else:
+        threshold = n / 2.0
+        stable_g3 = {k for k, c in g3_keys.items() if c > threshold}
 
     # Représentant de chaque G3 stable, collecté sur TOUTES les passes (pas
     # seulement la passe 0) : un G3 stable manqué à la passe 0 mais présent

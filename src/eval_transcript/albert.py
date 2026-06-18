@@ -37,6 +37,9 @@ class AlbertClient:
         if timeout is not None and timeout <= 0:
             raise AlbertError(f"timeout must be positive, got {timeout}")
         self.timeout = timeout if timeout is not None else DEFAULT_TIMEOUT_SECONDS
+        # Libellé du fournisseur, repris dans les messages d'erreur. Les
+        # sous-classes OpenAI-compatibles (cf. OpenRouterClient) le surchargent.
+        self.provider_name = "Albert API"
 
     @property
     def headers(self) -> dict[str, str]:
@@ -129,7 +132,7 @@ class AlbertClient:
             try:
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
-                message = f"Albert API request failed: {exc.response.status_code} {exc.response.reason_phrase} for {url}"
+                message = f"{self.provider_name} request failed: {exc.response.status_code} {exc.response.reason_phrase} for {url}"
                 detail = response_error_detail(exc.response)
                 if detail:
                     message = f"{message} - {detail}"

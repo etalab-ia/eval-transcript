@@ -151,12 +151,17 @@ def write_or_print_report(content: str, *, output_path: Path | None = None) -> N
     print(f"Rapport écrit : {output_path}", file=sys.stderr)
 
 
-def render_markdown(results: list[JudgeResult], *, include_g1: bool = True) -> str:
+def render_markdown(
+    results: list[JudgeResult],
+    *,
+    include_g1: bool = True,
+    judge_provider: str = "Albert API",
+) -> str:
     lines: list[str] = []
     lines.append("# Gravité sémantique (LLM-as-a-judge)\n")
     if results:
         lines.append(
-            f"> Juge : `{results[0].judge_model}` (Albert API). Hors scope : G0 (ponctuation, euh, répétitions)."
+            f"> Juge : `{results[0].judge_model}` ({judge_provider}). Hors scope : G0 (ponctuation, euh, répétitions)."
         )
         lines.append(
             "> **Score** = somme pondérée (G3=6, G2=2, G1=1, effondrement=12) normalisée pour 1000 mots "
