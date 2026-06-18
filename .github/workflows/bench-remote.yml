@@ -1,0 +1,131 @@
+name: Bench remote (officiels)
+
+# Transcription des discours officiels (corpus public HF) par les modeles accessibles
+# via API, puis calcul du WER. Declenchement manuel uniquement (chaque run = appels API
+# facturables). Les modeles locaux (WhisperX, Kyutai, Cohere/MLX) ne sont PAS ici : ils
+# exigent un GPU ou MLX et passeront par un runner self-hosted (phase 2).
+
+on:
+  workflow_dispatch:
+    inputs:
+      providers:
+        description: "Providers remote (csv) : albert, scaleway, elevenlabs"
+        default: "albert,scaleway"
+      push_results:
+        description: "Pousser les resultats vers AgentPublic/eval-stt-results (HF)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    env:
+      ALBERT_BASE_URL: https://albert.api.etalab.gouv.fr/v1
+      ALBERT_API_KEY: ${{ secrets.ALBERT_API_KEY }}
+      SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+      SCW_DEFAULT_PROJECT_ID: ${{ secrets.SCW_DEFAULT_PROJECT_ID }}
+      ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      CORPUS: AgentPublic/eval-stt-officiels
+      RESULTS: AgentPublic/eval-stt-results
+      PROVIDERS_INPUT: ${{ inputs.providers }}
+      # Voxtral (Scaleway) : limite 30 min/fichier -> on saute au-dela de ~28 min (auto,
+      # via ffprobe). Quand un long sample repasse sous la limite, il est couvert sans
+      # toucher la CI. crise_energetique : collapse sur un silence long de ~35 s (cas
+      # connu) -> skip explicite. Exclusions TEMPORAIRES : le chunk VAD est a porter dans
+      # le provider scaleway (cf. reprise PR #36).
+      VOXTRAL_MAX_SECONDS: "1700"
+      VOXTRAL_SILENCE_SKIP: "crise_energetique_aides_mai"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dependances systeme (ffprobe)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install projet
+        run: uv sync
+
+      - name: Pull corpus public depuis HF (lecture anonyme)
+        run: |
+          uvx --from "huggingface_hub[cli]" hf download "$CORPUS" \
+            --repo-type dataset --local-dir hf-corpus
+          mkdir -p data/audio data/ground_truth
+          cp hf-corpus/audio/* data/audio/
+          cp hf-corpus/ground_truth/* data/ground_truth/
+          echo "Corpus: $(ls data/audio/*.mp3 | wc -l) audios, $(ls data/ground_truth/*.txt | wc -l) references"
+
+      - name: Transcription (modeles remote)
+        run: |
+          set -uo pipefail
+          IFS=',' read -ra PROVIDERS <<< "$PROVIDERS_INPUT"
+          for audio in data/audio/*.mp3; do
+            id="$(basename "$audio" .mp3)"
+            dur="$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$audio" | cut -d. -f1)"
+            for p in "${PROVIDERS[@]}"; do
+              case "$p" in
+                albert)
+                  uv run eval-transcript albert transcribe "$audio" --language fr --timeout 900 --save \
+                    || echo "::warning::albert a echoue sur $id" ;;
+                scaleway)
+                  if [ "${dur:-0}" -gt "$VOXTRAL_MAX_SECONDS" ]; then
+                    echo "skip voxtral (> 28 min): $id"; continue
+                  fi
+                  if echo "$VOXTRAL_SILENCE_SKIP" | grep -qw "$id"; then
+                    echo "skip voxtral (silence long connu): $id"; continue
+                  fi
+                  uv run eval-transcript scaleway transcribe "$audio" --language fr --timeout 900 --save \
+                    || echo "::warning::voxtral a echoue sur $id" ;;
+                elevenlabs)
+                  uv run eval-transcript elevenlabs transcribe "$audio" --language fr --timeout 900 --save \
+                    || echo "::warning::elevenlabs a echoue sur $id" ;;
+                *)
+                  echo "::warning::provider inconnu: $p" ;;
+              esac
+            done
+          done
+
+      - name: Scoring WER
+        run: |
+          mkdir -p results/reports
+          REV="$(uvx --from huggingface_hub python -c "from huggingface_hub import HfApi; print(HfApi().dataset_info('$CORPUS').sha)")"
+          STAMP="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+          REPORT="results/reports/${STAMP}__wer.md"
+          {
+            echo "# WER - run CI $STAMP"
+            echo
+            echo "- corpus: $CORPUS @ ${REV}"
+            echo "- providers: $PROVIDERS_INPUT"
+            echo
+          } > "$REPORT"
+          uv run eval-transcript score all --normalization standard_numbers >> "$REPORT"
+          cat "$REPORT"
+
+      - name: Resultats vers HF (transcripts officiels + rapport)
+        if: ${{ inputs.push_results }}
+        run: |
+          if [ -z "${HF_TOKEN:-}" ]; then
+            echo "HF_TOKEN absent -> push HF saute, artefacts uniquement"; exit 0
+          fi
+          # En CI le corpus tire = officiels uniquement, donc data/transcriptions ne
+          # contient que du public. Garde-fou implicite : aucune reunion interne ici.
+          mkdir -p results/transcriptions
+          cp -r data/transcriptions/* results/transcriptions/ 2>/dev/null || true
+          uvx --from "huggingface_hub[cli]" hf upload "$RESULTS" results . \
+            --repo-type dataset --commit-message "CI run $(date -u +%FT%TZ)" \
+            || echo "::warning::push HF des resultats a echoue"
+
+      - name: Artefacts (toujours)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-remote
+          path: |
+            data/transcriptions/**
+            results/**
