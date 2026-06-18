@@ -49,7 +49,7 @@ class ConsensusTests(unittest.TestCase):
             _result("j2", ["alpha", "beta"]),
             _result("j3", ["alpha"]),
         ]
-        merged, counts, n, seuil = consensus_for_transcript(results)
+        merged, counts, n, seuil = consensus_for_transcript(results, panel_size=3)
         self.assertEqual(n, 3)
         self.assertEqual(seuil, 2)  # majorité stricte de 3
         kept = {d.extrait_reference for d in merged.divergences if d.gravite == "G3"}
@@ -63,16 +63,27 @@ class ConsensusTests(unittest.TestCase):
             _result("j2", ["alpha"]),
         ]
         # Unanimité exigée (2/2) : seul "alpha" survit.
-        merged, _counts, _n, seuil = consensus_for_transcript(results, min_agree=2)
+        merged, _counts, _n, seuil = consensus_for_transcript(results, panel_size=2, min_agree=2)
         self.assertEqual(seuil, 2)
         kept = {d.extrait_reference for d in merged.divergences if d.gravite == "G3"}
         self.assertEqual(kept, {"alpha"})
+
+    def test_partial_coverage_does_not_auto_pass(self) -> None:
+        # Panel de 2 juges, mais un seul a produit un résultat pour ce couple
+        # (l'autre a échoué). Le seuil doit rester celui du panel (2), donc le
+        # G3 du juge isolé n'est PAS retenu — sinon le consensus est bidon.
+        results = [_result("j1", ["alpha"])]
+        merged, _counts, n, seuil = consensus_for_transcript(results, panel_size=2)
+        self.assertEqual(n, 1)  # couverture partielle remontée
+        self.assertEqual(seuil, 2)  # seuil sur le panel complet, pas sur n=1
+        kept = {d.extrait_reference for d in merged.divergences if d.gravite == "G3"}
+        self.assertEqual(kept, set())  # rien retenu : 1 juge < seuil 2
 
     def test_does_not_mutate_inputs(self) -> None:
         r1 = _result("j1", ["alpha"])
         r2 = _result("j2", [])
         before = len(r1.divergences)
-        consensus_for_transcript([r1, r2])
+        consensus_for_transcript([r1, r2], panel_size=2)
         self.assertEqual(len(r1.divergences), before)  # original intact
 
 

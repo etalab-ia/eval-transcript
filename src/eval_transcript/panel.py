@@ -102,15 +102,22 @@ def run_panel(
 
 
 def consensus_for_transcript(
-    results: list[JudgeResult], *, min_agree: int | None = None
+    results: list[JudgeResult], *, panel_size: int, min_agree: int | None = None
 ) -> tuple[JudgeResult, dict[str, int], int, int]:
     """Consensus d'un transcript jugé par plusieurs juges.
 
+    `panel_size` = nombre total de juges du panel ; `results` ne contient que ceux
+    qui ont effectivement produit un résultat pour CE transcript (un juge peut
+    échouer sur un couple). Le seuil d'accord est calculé sur `panel_size`, PAS sur
+    les résultats présents : sinon, un transcript jugé par un seul juge verrait tous
+    ses G3 « passer » le consensus (seuil 1/1), ce qui viderait le panel de son sens.
+
     Renvoie (résultat fusionné, {ref_normalisée G3 -> nb de juges d'accord},
-    nb de juges, seuil d'accord retenu). Le seuil par défaut = majorité stricte.
+    nb de juges ayant produit un résultat (couverture), seuil d'accord retenu).
+    Le seuil par défaut = majorité stricte du panel.
     """
+    resolved = min_agree if min_agree is not None else (panel_size // 2 + 1)
     n = len(results)
-    resolved = min_agree if min_agree is not None else (n // 2 + 1)
     counts: dict[str, int] = {}
     for r in results:
         for k in {_normalize(d.extrait_reference) for d in r.divergences if d.gravite == "G3"}:
@@ -190,27 +197,36 @@ def _render_consensus(specs, indexed, all_keys, min_agree, include_g1) -> list[s
         f"(`{specs[0]}`). Trié du plus dégradé au plus fidèle.\n"
     )
 
-    # Calcul du consensus par transcript
+    # Calcul du consensus par transcript. Le seuil d'accord est fonction de la
+    # taille du panel (len(specs)), pas du nombre de juges présents pour le couple.
+    panel_size = len(specs)
     merged_by_key: dict[tuple[str, str, str], tuple[JudgeResult, dict[str, int], int, int]] = {}
     for key in all_keys:
         results = [indexed[s][key] for s in specs if key in indexed[s]]
         if not results:
             continue
-        merged_by_key[key] = consensus_for_transcript(results, min_agree=min_agree)
+        merged_by_key[key] = consensus_for_transcript(results, panel_size=panel_size, min_agree=min_agree)
 
     # Synthèse
-    lines.append("| Échantillon | Transcript | G3 cons. | Score /1k | Verdict |")
-    lines.append("|---|---|---:|---:|---|")
+    lines.append("| Échantillon | Transcript | G3 cons. | Score /1k | Verdict | Couverture |")
+    lines.append("|---|---|---:|---:|---|---:|")
     for key in sorted(all_keys, key=lambda k: (k[0], -(merged_by_key[k][0].score_per_1k if k in merged_by_key else 0))):
         if key not in merged_by_key:
             continue
-        merged, _counts, _n, _seuil = merged_by_key[key]
+        merged, _counts, n, _seuil = merged_by_key[key]
         sample, provider, model = key
+        coverage = f"{n}/{panel_size}" + (" ⚠️" if n < panel_size else "")
         lines.append(
             f"| {sample} | {provider}/{model} | {merged.counts['G3']} "
-            f"| {merged.score_per_1k:.1f} | {merged.verdict} |"
+            f"| {merged.score_per_1k:.1f} | {merged.verdict} | {coverage} |"
         )
     lines.append("")
+    if any(n < panel_size for _m, _c, n, _s in merged_by_key.values()):
+        lines.append(
+            "> ⚠️ Couverture partielle (`n/panel < 1`) : un ou plusieurs juges ont "
+            "échoué sur ce transcript. Le seuil de consensus reste calculé sur le "
+            "panel complet, donc un G3 d'un juge isolé n'est PAS retenu.\n"
+        )
 
     # Détail des G3 consensus
     lines.append("### Détail des G3 consensus\n")
@@ -228,7 +244,7 @@ def _render_consensus(specs, indexed, all_keys, min_agree, include_g1) -> list[s
             if d.gravite == "G3":
                 c = counts.get(_normalize(d.extrait_reference))
                 if c is not None:
-                    agree = f" — accord {c}/{n} juges"
+                    agree = f" — accord {c}/{panel_size} juges"
             flag = "" if d.verbatim_ok else " ⚠️ non-verbatim (à vérifier)"
             lines.append(f"- **{d.gravite}** · `{d.type}`{agree}{flag}")
             lines.append(f"  - réf : « {d.extrait_reference} »")

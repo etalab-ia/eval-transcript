@@ -13,8 +13,10 @@ from eval_transcript.judge import (
     JudgeResult,
     _extract_json,
     _is_verbatim,
+    JudgeError,
     _merge_passes,
     _verdict_from,
+    judge_pair,
     parse_judge_response,
 )
 from eval_transcript.judge_cli import JudgeCliError, run_judge, write_or_print_report
@@ -221,6 +223,29 @@ class RunJudgeCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(JudgeCliError):
                 write_or_print_report("# rapport", output_path=Path(tmp))
+
+
+class JudgePairErrorWrappingTests(unittest.TestCase):
+    def test_error_message_uses_client_provider_name(self) -> None:
+        # Le wrapper d'erreur de judge_pair doit nommer le bon fournisseur,
+        # pas « Albert » en dur, quand le juge tourne via OpenRouter.
+        class _OpenRouterFailing:
+            provider_name = "OpenRouter"
+
+            def chat_completion_text(self, **kwargs: object) -> str:
+                raise AlbertError("401 Unauthorized")
+
+        with self.assertRaises(JudgeError) as ctx:
+            judge_pair(
+                reference="réf",
+                hypothesis="hyp",
+                sample_id="s",
+                provider="p",
+                model="m",
+                client=_OpenRouterFailing(),
+            )
+        self.assertIn("OpenRouter", str(ctx.exception))
+        self.assertNotIn("Albert", str(ctx.exception))
 
 
 if __name__ == "__main__":

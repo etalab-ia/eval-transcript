@@ -4,7 +4,9 @@ import os
 import unittest
 from unittest import mock
 
-from eval_transcript.albert import AlbertClient
+import httpx
+
+from eval_transcript.albert import AlbertClient, AlbertError
 from eval_transcript.openrouter import (
     DEFAULT_BASE_URL,
     DEFAULT_JUDGE_MODEL,
@@ -44,6 +46,29 @@ class OpenRouterClientTests(unittest.TestCase):
     def test_default_judge_model_is_not_mistral(self) -> None:
         # Le défaut OpenRouter doit éviter la famille Mistral (anti-biais).
         self.assertNotIn("mistral", DEFAULT_JUDGE_MODEL.lower())
+
+
+class NetworkErrorWrappingTests(unittest.TestCase):
+    def test_request_error_becomes_albert_error(self) -> None:
+        # Une erreur réseau (timeout/connexion) doit être convertie en AlbertError,
+        # sinon une httpx.RequestError échappe au handler par-couple et avorte tout
+        # le batch (cf. revue PR #35, finding #1).
+        client = AlbertClient(api_key="k")
+
+        class _Boom:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def request(self, *a, **k):
+                raise httpx.ReadTimeout("timed out")
+
+        with mock.patch("eval_transcript.albert.httpx.Client", return_value=_Boom()):
+            with self.assertRaises(AlbertError) as ctx:
+                client.chat_completion_text(model="m", messages=[])
+        self.assertIn("ReadTimeout", str(ctx.exception))
 
 
 if __name__ == "__main__":

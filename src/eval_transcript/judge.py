@@ -361,7 +361,8 @@ def judge_pair(
                 response_format={"type": "json_object"},
             )
         except AlbertError as exc:
-            raise JudgeError(f"Appel juge Albert échoué: {exc}") from exc
+            provider = getattr(client, "provider_name", "Albert API")
+            raise JudgeError(f"Appel juge {provider} échoué: {exc}") from exc
         results.append(
             parse_judge_response(
                 content,

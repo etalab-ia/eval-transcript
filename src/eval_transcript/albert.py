@@ -128,7 +128,13 @@ class AlbertClient:
     def _request_json(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         with httpx.Client(timeout=self.timeout, headers=self.headers) as client:
-            response = client.request(method, url, **kwargs)
+            try:
+                response = client.request(method, url, **kwargs)
+            except httpx.RequestError as exc:
+                # Erreurs réseau (timeout, connexion, protocole) : les convertir en
+                # AlbertError pour que l'appelant (juge) puisse les traiter par couple
+                # au lieu de laisser une httpx.RequestError avorter tout le batch.
+                raise AlbertError(f"{self.provider_name} request failed: {type(exc).__name__} for {url}") from exc
             try:
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
