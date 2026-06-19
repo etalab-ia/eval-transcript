@@ -36,6 +36,20 @@ class ResultsError(RuntimeError):
     """Raised when local results cannot be pushed safely."""
 
 
+def _hf_http_error_types() -> tuple[type[BaseException], ...]:
+    """huggingface_hub HTTP error class, or an empty tuple (catches nothing) if absent.
+
+    Lets the live calls surface a clean ``ResultsError`` (e.g. invalid token, repo
+    not found) instead of a raw traceback, while keeping the unit tests free of a
+    hard huggingface_hub dependency.
+    """
+    try:
+        from huggingface_hub.errors import HfHubHTTPError
+    except ImportError:  # pragma: no cover - exercised only in production
+        return ()
+    return (HfHubHTTPError,)
+
+
 class HfApiLike(Protocol):
     """Subset of huggingface_hub.HfApi used here (keeps unit tests dependency-free)."""
 
@@ -71,7 +85,10 @@ class PushPlan:
 
 def public_sample_ids(api: HfApiLike, corpus_repo: str, *, revision: str | None = None) -> set[str]:
     """Sample IDs declared public by the corpus dataset (one per ``ground_truth/<id>`` file)."""
-    files = api.list_repo_files(corpus_repo, repo_type=DATASET_REPO_TYPE, revision=revision)
+    try:
+        files = api.list_repo_files(corpus_repo, repo_type=DATASET_REPO_TYPE, revision=revision)
+    except _hf_http_error_types() as exc:
+        raise ResultsError(f"Failed to read corpus dataset {corpus_repo}: {exc}") from exc
     prefix = f"{GROUND_TRUTH_REPO_SUBDIR}/"
     return {
         Path(f[len(prefix):]).stem
@@ -171,10 +188,13 @@ class ResultsClient:
             CommitOperationAdd(path_in_repo=u.path_in_repo, path_or_fileobj=str(u.local_path))
             for u in plan.uploads
         ]
-        self._get_api().create_commit(
-            repo_id=plan.results_repo,
-            repo_type=DATASET_REPO_TYPE,
-            operations=operations,
-            commit_message=message,
-            token=self.token,
-        )
+        try:
+            self._get_api().create_commit(
+                repo_id=plan.results_repo,
+                repo_type=DATASET_REPO_TYPE,
+                operations=operations,
+                commit_message=message,
+                token=self.token,
+            )
+        except _hf_http_error_types() as exc:
+            raise ResultsError(f"Failed to push to results dataset {plan.results_repo}: {exc}") from exc

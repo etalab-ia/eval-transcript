@@ -9,6 +9,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from huggingface_hub.errors import HfHubHTTPError
+
 import eval_transcript
 from eval_transcript.results import (
     PlannedUpload,
@@ -20,27 +22,29 @@ from eval_transcript.results import (
 )
 
 
-@contextlib.contextmanager
-def chdir(path: Path):
-    previous = Path.cwd()
-    os.chdir(path)
-    try:
-        yield
-    finally:
-        os.chdir(previous)
-
-
 class FakeHfApi:
-    def __init__(self, *, ground_truth_ids: list[str]) -> None:
+    def __init__(
+        self,
+        *,
+        ground_truth_ids: list[str],
+        list_error: BaseException | None = None,
+        commit_error: BaseException | None = None,
+    ) -> None:
         self.files = [f"ground_truth/{sid}.txt" for sid in ground_truth_ids] + [
             f"audio/{sid}.mp3" for sid in ground_truth_ids
         ]
+        self.list_error = list_error
+        self.commit_error = commit_error
         self.commit_calls: list[dict[str, object]] = []
 
     def list_repo_files(self, repo_id, *, repo_type, revision=None):
+        if self.list_error is not None:
+            raise self.list_error
         return list(self.files)
 
     def create_commit(self, *, repo_id, operations, commit_message, repo_type, token=None):
+        if self.commit_error is not None:
+            raise self.commit_error
         self.commit_calls.append(
             {
                 "repo_id": repo_id,
@@ -192,6 +196,24 @@ class ResultsCliTests(unittest.TestCase):
             self.assertIn("Ignorés (hors corpus public): reunion-x", out)
             self.assertIn("[dry-run]", out)
             client.push.assert_not_called()
+
+
+class HfErrorTests(unittest.TestCase):
+    def test_corpus_read_error_becomes_results_error(self) -> None:
+        with TemporaryDirectory() as tmp:
+            tx = _make_transcriptions(Path(tmp), {"officiel-a": ["whisperx__large-v2.txt"]})
+            api = FakeHfApi(ground_truth_ids=["officiel-a"], list_error=HfHubHTTPError("403 Forbidden"))
+            with self.assertRaisesRegex(ResultsError, "Failed to read corpus"):
+                build_push_plan(api=api, corpus_repo="c", results_repo="r", transcriptions_dir=tx)
+
+    def test_push_commit_error_becomes_results_error(self) -> None:
+        with TemporaryDirectory() as tmp:
+            tx = _make_transcriptions(Path(tmp), {"officiel-a": ["whisperx__large-v2.txt"]})
+            api = FakeHfApi(ground_truth_ids=["officiel-a"], commit_error=HfHubHTTPError("401 Unauthorized"))
+            client = ResultsClient(results_repo="r", token="tok", api=api)
+            plan = client.plan(transcriptions_dir=tx)
+            with self.assertRaisesRegex(ResultsError, "Failed to push"):
+                client.push(plan)
 
 
 if __name__ == "__main__":
