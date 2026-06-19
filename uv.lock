@@ -501,6 +501,7 @@ source = { editable = "." }
 dependencies = [
     { name = "elevenlabs" },
     { name = "httpx" },
+    { name = "huggingface-hub" },
     { name = "jiwer" },
     { name = "python-dotenv" },
     { name = "text2num" },
@@ -518,6 +519,7 @@ whisperx = [
 requires-dist = [
     { name = "elevenlabs", specifier = ">=2.50.0" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "huggingface-hub", specifier = ">=0.24.0" },
     { name = "jiwer", specifier = ">=4.0.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "text2num", specifier = ">=2.4.0" },
