@@ -20,6 +20,7 @@ import os
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 import tempfile
+import threading
 from pathlib import Path
 
 import librosa
@@ -45,19 +46,25 @@ MIN_SEGMENT_S = 0.3
 app = FastAPI(title="kyutai-server")
 _model = None
 _processor = None
+# Sérialise le lazy-load : deux requêtes concurrentes pendant le chargement
+# initial chargeraient sinon le modèle 2x (pic mémoire → risque d'OOM).
+_load_lock = threading.Lock()
 
 
 def get_model():
     global _model, _processor
-    if _model is None:
-        _processor = KyutaiSpeechToTextProcessor.from_pretrained(MODEL_REPO)
-        # float16 sur MPS : ~2x plus rapide que float32, sortie identique sur
-        # nos tests FR. Repli float32 si MPS indispo (CPU).
-        dtype = torch.float16 if DEVICE == "mps" else torch.float32
-        _model = KyutaiSpeechToTextForConditionalGeneration.from_pretrained(
-            MODEL_REPO, torch_dtype=dtype
-        ).to(DEVICE)
-        _model.eval()
+    if _model is not None:
+        return _model, _processor
+    with _load_lock:
+        if _model is None:
+            _processor = KyutaiSpeechToTextProcessor.from_pretrained(MODEL_REPO)
+            # float16 sur MPS : ~2x plus rapide que float32, sortie identique sur
+            # nos tests FR. Repli float32 si MPS indispo (CPU).
+            dtype = torch.float16 if DEVICE == "mps" else torch.float32
+            _model = KyutaiSpeechToTextForConditionalGeneration.from_pretrained(
+                MODEL_REPO, torch_dtype=dtype
+            ).to(DEVICE)
+            _model.eval()
     return _model, _processor
 
 
@@ -110,6 +117,9 @@ def list_models():
 @app.post("/v1/audio/transcriptions")
 async def transcribe(
     file: UploadFile = File(...),
+    # `model`, `language` et `response_format` sont acceptés pour la compat
+    # OpenAI mais ignorés : un seul modèle servi, langue gérée par le modèle,
+    # sortie texte uniquement.
     model: str | None = Form(None),
     language: str | None = Form(None),
     response_format: str | None = Form(None),

@@ -18,8 +18,9 @@ Les deux servent sur des **ports distincts** → ils peuvent tourner simultaném
 
 ## Lancer
 
-Dépendances : voir `pyproject.toml` (transformers ≥ 4.53, torch, librosa,
-soundfile, sentencepiece, fastapi, uvicorn, python-multipart).
+Dépendances : voir `pyproject.toml` (transformers ≥ 5.3 — requis par la classe
+native Cohere ; validé sur 5.9 —, torch, librosa, soundfile, sentencepiece,
+fastapi, uvicorn, python-multipart).
 
 ```bash
 # Kyutai (port 8000)

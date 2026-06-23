@@ -1,8 +1,10 @@
 """Serveur HTTP OpenAI-compatible minimal exposant Cohere Transcribe.
 
 Runtime : transformers / PyTorch (MPS sur Apple Silicon). Le modèle
-`CohereLabs/cohere-transcribe-03-2026` (model_type `cohere_asr`, custom_code)
-se charge via les classes Auto + `trust_remote_code=True`.
+`CohereLabs/cohere-transcribe-03-2026` (model_type `cohere_asr`) se charge via
+la classe NATIVE `CohereAsrForConditionalGeneration` (transformers >= 5.3), et
+NON via le remote-code (`AutoModelForSpeechSeq2Seq` + `trust_remote_code`), dont
+le chargement est cassé sous transformers 5.9 (cf. note dans `get_model`).
 
 Particularité vs Kyutai : Cohere gère le long-form TOUT SEUL. Le feature
 extractor découpe l'audio au-delà de `max_audio_clip_s`, et `processor.decode`
@@ -26,6 +28,7 @@ import os
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 import tempfile
+import threading
 from pathlib import Path
 
 import librosa
@@ -46,25 +49,32 @@ MAX_NEW_TOKENS = 256
 app = FastAPI(title="cohere-server")
 _model = None
 _processor = None
+# Sérialise le lazy-load : deux requêtes concurrentes pendant le chargement
+# initial chargeraient sinon le modèle 2x (pic mémoire → risque d'OOM).
+_load_lock = threading.Lock()
 
 
 def get_model():
     global _model, _processor
-    if _model is None:
-        # `cohere_asr` est intégré nativement à transformers >= 5.x : on utilise
-        # la classe native plutôt que le remote-code (`trust_remote_code` +
-        # AutoModelForSpeechSeq2Seq), dont le chemin de chargement est cassé sous
-        # transformers 5.9 (decoder_start_token_id mal appliqué → génération
-        # multilingue aberrante en ignorant l'audio). La classe native applique
-        # correctement la generation_config.
-        _processor = AutoProcessor.from_pretrained(MODEL_REPO)
-        # float32 obligatoire : le code Cohere masque l'attention avec -1e9, qui
-        # déborde la plage du float16 (max ~65504) → "value cannot be converted
-        # to type c10::Half without overflow". Plus lent que fp16 mais correct.
-        _model = CohereAsrForConditionalGeneration.from_pretrained(
-            MODEL_REPO, dtype=torch.float32
-        ).to(DEVICE)
-        _model.eval()
+    if _model is not None:
+        return _model, _processor
+    with _load_lock:
+        if _model is None:
+            # `cohere_asr` est intégré nativement à transformers >= 5.x : on
+            # utilise la classe native plutôt que le remote-code
+            # (`trust_remote_code` + AutoModelForSpeechSeq2Seq), dont le chemin
+            # de chargement est cassé sous transformers 5.9
+            # (decoder_start_token_id mal appliqué → génération multilingue
+            # aberrante en ignorant l'audio). La classe native applique
+            # correctement la generation_config.
+            _processor = AutoProcessor.from_pretrained(MODEL_REPO)
+            # float32 obligatoire : le code Cohere masque l'attention avec -1e9,
+            # qui déborde la plage du float16 (max ~65504) → "value cannot be
+            # converted to type c10::Half without overflow". Plus lent mais correct.
+            _model = CohereAsrForConditionalGeneration.from_pretrained(
+                MODEL_REPO, dtype=torch.float32
+            ).to(DEVICE)
+            _model.eval()
     return _model, _processor
 
 
@@ -103,6 +113,8 @@ def list_models():
 @app.post("/v1/audio/transcriptions")
 async def transcribe(
     file: UploadFile = File(...),
+    # `model` et `response_format` sont acceptés pour la compat OpenAI mais
+    # ignorés : ce serveur n'expose qu'un seul modèle et ne renvoie que du texte.
     model: str | None = Form(None),
     language: str | None = Form(None),
     response_format: str | None = Form(None),
