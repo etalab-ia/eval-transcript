@@ -97,9 +97,15 @@ def transcribe_path(path: str) -> str:
         if len(chunk) < min_seg:
             continue
         inputs = processor(audio=chunk, sampling_rate=SR, return_tensors="pt")
+        # NE PAS caster au dtype du modèle : Kyutai charge en float16 mais garde
+        # des biais conv en float32 ; des inputs float32 matchent ces couches.
+        # Forcer float16 ici casse l'encodeur ("Input type (c10::Half) and bias
+        # type (float) should be the same"). On laisse le dtype d'origine.
         inputs = inputs.to(DEVICE)
         with torch.no_grad():
             output_tokens = model.generate(**inputs)
+        # Rapatrier sur CPU avant decode (certains décodeurs HF gèrent mal MPS).
+        output_tokens = output_tokens.to("cpu")
         text = processor.batch_decode(output_tokens, skip_special_tokens=True)[0].strip()
         if text:
             parts.append(text)
@@ -114,8 +120,10 @@ def list_models():
     }
 
 
+# Route SYNCHRONE : `transcribe_path` est bloquante (I/O + inférence). En `def`,
+# FastAPI l'exécute dans un threadpool → n'asphyxie pas l'event loop.
 @app.post("/v1/audio/transcriptions")
-async def transcribe(
+def transcribe(
     file: UploadFile = File(...),
     # `model`, `language` et `response_format` sont acceptés pour la compat
     # OpenAI mais ignorés : un seul modèle servi, langue gérée par le modèle,
@@ -125,11 +133,15 @@ async def transcribe(
     response_format: str | None = Form(None),
 ):
     suffix = Path(file.filename or "audio.wav").suffix or ".wav"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(await file.read())
-        tmp_path = tmp.name
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    tmp_path = tmp.name
     try:
+        with tmp:
+            tmp.write(file.file.read())
         text = transcribe_path(tmp_path)
     finally:
-        os.unlink(tmp_path)
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
     return {"text": text}

@@ -89,6 +89,8 @@ def transcribe_path(path: str, language: str) -> str:
     inputs = inputs.to(model.device, dtype=model.dtype)
     with torch.no_grad():
         outputs = model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS)
+    # Rapatrier sur CPU avant decode (certains décodeurs HF gèrent mal MPS).
+    outputs = outputs.to("cpu")
     # `language` est obligatoire au decode dès qu'un audio_chunk_index est
     # présent (réassemblage long-form) ; on le passe systématiquement.
     decoded = processor.decode(
@@ -110,8 +112,10 @@ def list_models():
     }
 
 
+# Route SYNCHRONE : `transcribe_path` est bloquante (I/O + inférence). En `def`,
+# FastAPI l'exécute dans un threadpool → n'asphyxie pas l'event loop.
 @app.post("/v1/audio/transcriptions")
-async def transcribe(
+def transcribe(
     file: UploadFile = File(...),
     # `model` et `response_format` sont acceptés pour la compat OpenAI mais
     # ignorés : ce serveur n'expose qu'un seul modèle et ne renvoie que du texte.
@@ -120,11 +124,15 @@ async def transcribe(
     response_format: str | None = Form(None),
 ):
     suffix = Path(file.filename or "audio.wav").suffix or ".wav"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(await file.read())
-        tmp_path = tmp.name
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    tmp_path = tmp.name
     try:
+        with tmp:
+            tmp.write(file.file.read())
         text = transcribe_path(tmp_path, language or DEFAULT_LANGUAGE)
     finally:
-        os.unlink(tmp_path)
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
     return {"text": text}
