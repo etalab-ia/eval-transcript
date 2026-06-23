@@ -1,0 +1,15 @@
+[project]
+name = "kyutai-server"
+version = "0.1.0"
+description = "Minimal OpenAI-compatible transcription server wrapping Kyutai STT (transformers/PyTorch, Apple Silicon MPS)."
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "transformers>=4.53.0",
+    "torch",
+    "librosa",
+    "soundfile",
+    "sentencepiece",
+    "fastapi",
+    "uvicorn[standard]",
+    "python-multipart",
+]
