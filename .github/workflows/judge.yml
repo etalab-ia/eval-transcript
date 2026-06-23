@@ -12,10 +12,18 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "single (un juge, Albert/Mistral) ou panel (multi-juges + consensus)"
+        description: "single (un juge) ou panel (multi-juges + consensus)"
         type: choice
         options: [single, panel]
         default: single
+      judge_provider:
+        description: "single uniquement : fournisseur du juge"
+        type: choice
+        options: [albert, openrouter]
+        default: albert
+      judge_model:
+        description: "Modele juge (override). Ex: anthropic/claude-opus-4.8. Vide = defaut du provider."
+        default: ""
       passes:
         description: "Passes self-consistency (>1 ne retient que les G3 stables)"
         default: "1"
@@ -38,6 +46,8 @@ jobs:
       CORPUS: AgentPublic/eval-stt-officiels
       RESULTS: AgentPublic/eval-stt-results
       MODE: ${{ inputs.mode }}
+      JUDGE_PROVIDER: ${{ inputs.judge_provider }}
+      JUDGE_MODEL: ${{ inputs.judge_model }}
       PASSES: ${{ inputs.passes }}
     steps:
       - uses: actions/checkout@v4
@@ -66,14 +76,24 @@ jobs:
           mkdir -p results/reports
           REV="$(uvx --from huggingface_hub python -c "from huggingface_hub import HfApi; print(HfApi().dataset_info('$CORPUS').sha)")"
           STAMP="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
-          REPORT="results/reports/${STAMP}__gravite-${MODE}.md"
+          # Slug = mode (+ modele juge si override) pour ne pas ecraser un autre run
+          # (ex. gravite-single-anthropic_claude-opus-4.8.md vs gravite-single.md).
+          SLUG="$MODE"
+          if [ -n "$JUDGE_MODEL" ]; then
+            SLUG="${MODE}-$(echo "$JUDGE_MODEL" | tr '/:' '__')"
+          fi
+          REPORT="results/reports/${STAMP}__gravite-${SLUG}.md"
           if [ "$MODE" = "panel" ]; then
-            uv run eval-transcript panel --passes "$PASSES" --output "$REPORT"
+            if [ -n "$JUDGE_MODEL" ]; then
+              uv run eval-transcript panel --judge albert --judge "openrouter:$JUDGE_MODEL" --passes "$PASSES" --output "$REPORT"
+            else
+              uv run eval-transcript panel --passes "$PASSES" --output "$REPORT"
+            fi
           else
-            uv run eval-transcript judge --judge-provider albert --passes "$PASSES" --output "$REPORT"
+            uv run eval-transcript judge --judge-provider "$JUDGE_PROVIDER" ${JUDGE_MODEL:+--judge-model "$JUDGE_MODEL"} --passes "$PASSES" --output "$REPORT"
           fi
           # Estampille la revision du corpus en tete de rapport (reproductibilite)
-          sed -i "1i <!-- corpus: $CORPUS @ $REV | mode: $MODE | passes: $PASSES -->" "$REPORT"
+          sed -i "1i <!-- corpus: $CORPUS @ $REV | mode: $MODE | provider: $JUDGE_PROVIDER | model: ${JUDGE_MODEL:-default} | passes: $PASSES -->" "$REPORT"
           cat "$REPORT"
 
       - name: Rapport vers HF
