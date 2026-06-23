@@ -89,7 +89,7 @@ jobs:
             echo "- providers: $PROVIDERS_INPUT"
             echo
           } > "$REPORT"
-          uv run eval-transcript score all --normalization standard_numbers >> "$REPORT"
+          uv run eval-transcript score all --normalization standard_numbers --format markdown >> "$REPORT"
           cat "$REPORT"
 
       - name: Resultats vers HF (transcripts officiels + rapport)
