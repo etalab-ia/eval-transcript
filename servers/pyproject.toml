@@ -1,0 +1,18 @@
+[project]
+name = "eval-transcript-servers"
+version = "0.1.0"
+description = "Minimal OpenAI-compatible transcription servers wrapping local ASR models (Kyutai STT, Cohere Transcribe) for eval-transcript (transformers/PyTorch, Apple Silicon MPS)."
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    # >=5.3 requis : la classe native CohereAsrForConditionalGeneration
+    # (cohere_server.py) n'existe que depuis transformers 5.x ; couvre aussi
+    # les classes Kyutai (>=4.53). Validé sur 5.9.
+    "transformers>=5.3.0",
+    "torch",
+    "librosa",
+    "soundfile",
+    "sentencepiece",
+    "fastapi",
+    "uvicorn[standard]",
+    "python-multipart",
+]
