@@ -24,6 +24,12 @@ on:
       judge_model:
         description: "Modele juge (override). Ex: anthropic/claude-opus-4.8. Vide = defaut du provider."
         default: ""
+      judges:
+        description: "panel uniquement : liste CSV de juges PROVIDER[:MODEL]. Ex: albert:mistral-medium-2508,albert:openai/gpt-oss-120b,openrouter:anthropic/claude-opus-4.8. Vide = defaut (albert + openrouter)."
+        default: ""
+      consensus_min:
+        description: "panel uniquement : nb min de juges qui doivent confirmer un G3. Vide = majorite stricte."
+        default: ""
       passes:
         description: "Passes self-consistency (>1 ne retient que les G3 stables)"
         default: "1"
@@ -48,6 +54,8 @@ jobs:
       MODE: ${{ inputs.mode }}
       JUDGE_PROVIDER: ${{ inputs.judge_provider }}
       JUDGE_MODEL: ${{ inputs.judge_model }}
+      JUDGES_CSV: ${{ inputs.judges }}
+      CONSENSUS_MIN: ${{ inputs.consensus_min }}
       PASSES: ${{ inputs.passes }}
     steps:
       - uses: actions/checkout@v4
@@ -79,21 +87,27 @@ jobs:
           # Slug = mode (+ modele juge si override) pour ne pas ecraser un autre run
           # (ex. gravite-single-anthropic_claude-opus-4.8.md vs gravite-single.md).
           SLUG="$MODE"
-          if [ -n "$JUDGE_MODEL" ]; then
+          if [ "$MODE" = "single" ] && [ -n "$JUDGE_MODEL" ]; then
             SLUG="${MODE}-$(echo "$JUDGE_MODEL" | tr '/:' '__')"
+          fi
+          if [ "$MODE" = "panel" ] && [ -n "$JUDGES_CSV" ]; then
+            SLUG="panel-consensus${CONSENSUS_MIN:+-min$CONSENSUS_MIN}"
           fi
           REPORT="results/reports/${STAMP}__gravite-${SLUG}.md"
           if [ "$MODE" = "panel" ]; then
-            if [ -n "$JUDGE_MODEL" ]; then
-              uv run eval-transcript panel --judge albert --judge "openrouter:$JUDGE_MODEL" --passes "$PASSES" --output "$REPORT"
-            else
-              uv run eval-transcript panel --passes "$PASSES" --output "$REPORT"
+            JUDGE_ARGS=""
+            if [ -n "$JUDGES_CSV" ]; then
+              IFS=',' read -ra JS <<< "$JUDGES_CSV"
+              for j in "${JS[@]}"; do JUDGE_ARGS="$JUDGE_ARGS --judge $j"; done
+            elif [ -n "$JUDGE_MODEL" ]; then
+              JUDGE_ARGS="--judge albert --judge openrouter:$JUDGE_MODEL"
             fi
+            uv run eval-transcript panel $JUDGE_ARGS --mode consensus ${CONSENSUS_MIN:+--consensus-min "$CONSENSUS_MIN"} --passes "$PASSES" --output "$REPORT"
           else
             uv run eval-transcript judge --judge-provider "$JUDGE_PROVIDER" ${JUDGE_MODEL:+--judge-model "$JUDGE_MODEL"} --passes "$PASSES" --output "$REPORT"
           fi
           # Estampille la revision du corpus en tete de rapport (reproductibilite)
-          sed -i "1i <!-- corpus: $CORPUS @ $REV | mode: $MODE | provider: $JUDGE_PROVIDER | model: ${JUDGE_MODEL:-default} | passes: $PASSES -->" "$REPORT"
+          sed -i "1i <!-- corpus: $CORPUS @ $REV | mode: $MODE | judges: ${JUDGES_CSV:-default} | consensus_min: ${CONSENSUS_MIN:-majorite} | passes: $PASSES -->" "$REPORT"
           cat "$REPORT"
 
       - name: Rapport vers HF
