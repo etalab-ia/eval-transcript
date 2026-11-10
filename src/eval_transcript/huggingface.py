@@ -325,9 +325,12 @@ def _candidate_paths_for_field(
 
 
 def _split_stem_suffix(path: str) -> tuple[str, str]:
+    # Lowercase the suffix: _collect_commit_operations accepts ``sample.WAV``
+    # via path.suffix.lower(), so discovery must match the upload path or a
+    # pushed file disappears from ``ls`` and cannot be pulled back.
     name = Path(path).name
     p = Path(name)
-    return p.stem, p.suffix
+    return p.stem, p.suffix.lower()
 
 
 def _repo_subdir(path: str) -> str | None:

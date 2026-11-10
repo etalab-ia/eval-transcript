@@ -138,6 +138,37 @@ class ConstructorTests(unittest.TestCase):
             with self.assertRaisesRegex(HuggingFaceError, "HF_TOKEN"):
                 HuggingFaceClient()
 
+    def test_uppercase_extensions_round_trip_through_ls_and_pull(self) -> None:
+        # push accepts sample.WAV (path.suffix.lower()), so discovery must too,
+        # otherwise an uploaded file vanishes from ls and cannot be pulled back.
+        files = ["audio/sample-a.WAV", "ground_truth/sample-a.TXT"]
+        api = FakeHfApi(files=files, info=FakeInfo(private=True))
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.dict("os.environ", {"HF_TOKEN": "tok"}, clear=True):
+                client = HuggingFaceClient(
+                    audio_dir=root / "audio",
+                    ground_truth_dir=root / "ground_truth",
+                    api=api,
+                )
+            self.assertEqual(client.list_samples(), ["sample-a"])
+
+            staging = root / "staging"
+            staging.mkdir()
+            pulled: list[str] = []
+
+            def fake_download(repo_id: str, filename: str, revision, token) -> str:
+                pulled.append(filename)
+                source = staging / Path(filename).name
+                source.write_bytes(b"RIFF")
+                return str(source)
+
+            with patch("eval_transcript.huggingface._download_module_level", fake_download):
+                result = client.pull(all_samples=True)
+
+        self.assertEqual([s.sample_id for s in result.samples], ["sample-a"])
+        self.assertEqual(pulled, ["audio/sample-a.WAV", "ground_truth/sample-a.TXT"])
+
     def test_token_explicit_is_accepted(self) -> None:
         client = HuggingFaceClient(token="tok", require_token=False)
         self.assertEqual(client.token, "tok")
