@@ -34,7 +34,7 @@ class HfApiLike(Protocol):
     huggingface_hub, so it does not belong on this Protocol.
     """
 
-    def dataset_info(self, repo_id: str, *, repo_type: str = ..., revision: str | None = None) -> Any: ...
+    def dataset_info(self, repo_id: str, *, revision: str | None = None) -> Any: ...
 
     def list_repo_files(self, repo_id: str, *, repo_type: str = ..., revision: str | None = None) -> list[str]: ...
 
@@ -255,7 +255,7 @@ class HuggingFaceClient:
 
     def _ensure_private_repo(self, api: HfApiLike) -> None:
         try:
-            info = api.dataset_info(self.repo_id, repo_type=DATASET_REPO_TYPE)
+            info = api.dataset_info(self.repo_id)
         except _repository_not_found_error():
             api.create_repo(
                 self.repo_id,

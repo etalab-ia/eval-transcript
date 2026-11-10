@@ -130,6 +130,27 @@ class HuggingFaceCliTests(unittest.TestCase):
                     eval_transcript.main()
             self.assertIn("HF_TOKEN", stderr.getvalue())
 
+    def test_huggingface_dataset_ls_honours_HF_DATASET_REPO_env(self) -> None:
+        # HF_DATASET_REPO must reach the client when --repo is omitted, otherwise
+        # the documented env configuration silently targets the built-in repo.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            with patch("eval_transcript.HuggingFaceClient") as client_class:
+                client = client_class.return_value
+                client.repo_id = "team/custom-corpus"
+                client.list_samples.return_value = []
+
+                argv = ["eval-transcript", "huggingface", "dataset", "ls"]
+                with chdir(root), patch("eval_transcript.load_dotenv"), patch.dict(
+                    os.environ, {"HF_DATASET_REPO": "team/custom-corpus"}, clear=True
+                ), patch.object(sys, "argv", argv), contextlib.redirect_stdout(
+                    io.StringIO()
+                ), contextlib.redirect_stderr(io.StringIO()):
+                    eval_transcript.main()
+
+            self.assertIsNone(client_class.call_args.kwargs["dataset_repo"])
+
 
 if __name__ == "__main__":
     unittest.main()

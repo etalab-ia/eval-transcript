@@ -93,7 +93,7 @@ def _build_huggingface_client(args: argparse.Namespace, *, require_token: bool) 
     audio_dir = getattr(args, "audio_dir", HF_AUDIO_DIR)
     ground_truth_dir = getattr(args, "ground_truth_dir", HF_GROUND_TRUTH_DIR)
     return HuggingFaceClient(
-        dataset_repo=getattr(args, "repo", HF_DEFAULT_DATASET_REPO),
+        dataset_repo=getattr(args, "repo", None),
         org=getattr(args, "org", None),
         token=getattr(args, "token", None),
         audio_dir=audio_dir,
@@ -223,7 +223,7 @@ def main() -> None:
     hf_dataset_ls = hf_dataset_subparsers.add_parser("ls", help="List sample IDs in the configured corpus repo")
     hf_dataset_ls.add_argument("--token", default=None, help=f"Hugging Face token; defaults to ${HF_API_KEY_ENV} (anonymous when public)")
     hf_dataset_ls.add_argument("--org", default=None, help="Hugging Face org/namespace; defaults to $HF_ORG")
-    hf_dataset_ls.add_argument("--repo", default=HF_DEFAULT_DATASET_REPO, help=f"Dataset repo; defaults to ${HF_DEFAULT_DATASET_REPO}")
+    hf_dataset_ls.add_argument("--repo", default=None, help=f"Dataset repo; defaults to $HF_DATASET_REPO or {HF_DEFAULT_DATASET_REPO}")
     hf_dataset_ls.add_argument("--revision", default=None, help="Dataset revision to list")
 
     hf_dataset_pull = hf_dataset_subparsers.add_parser("pull", help="Download corpus samples into data/audio and data/ground_truth")
@@ -232,7 +232,7 @@ def main() -> None:
     hf_dataset_pull.add_argument("--force", action="store_true", help="Overwrite local files even if they already exist")
     hf_dataset_pull.add_argument("--token", default=None, help=f"Hugging Face token; defaults to ${HF_API_KEY_ENV}")
     hf_dataset_pull.add_argument("--org", default=None, help="Hugging Face org/namespace; defaults to $HF_ORG")
-    hf_dataset_pull.add_argument("--repo", default=HF_DEFAULT_DATASET_REPO, help=f"Dataset repo; defaults to ${HF_DEFAULT_DATASET_REPO}")
+    hf_dataset_pull.add_argument("--repo", default=None, help=f"Dataset repo; defaults to $HF_DATASET_REPO or {HF_DEFAULT_DATASET_REPO}")
     hf_dataset_pull.add_argument("--revision", default=None, help="Dataset revision to pull")
     hf_dataset_pull.add_argument("--audio-dir", type=Path, default=HF_AUDIO_DIR, help="Directory to write audio files")
     hf_dataset_pull.add_argument("--ground-truth-dir", type=Path, default=HF_GROUND_TRUTH_DIR, help="Directory to write ground truth files")
@@ -241,7 +241,7 @@ def main() -> None:
     hf_dataset_push.add_argument("--message", default="Update eval-transcript corpus", help="Commit message used for the upload")
     hf_dataset_push.add_argument("--token", default=None, help=f"Hugging Face token; defaults to ${HF_API_KEY_ENV}")
     hf_dataset_push.add_argument("--org", default=None, help="Hugging Face org/namespace; defaults to $HF_ORG")
-    hf_dataset_push.add_argument("--repo", default=HF_DEFAULT_DATASET_REPO, help=f"Dataset repo; defaults to ${HF_DEFAULT_DATASET_REPO}")
+    hf_dataset_push.add_argument("--repo", default=None, help=f"Dataset repo; defaults to $HF_DATASET_REPO or {HF_DEFAULT_DATASET_REPO}")
     hf_dataset_push.add_argument("--audio-dir", type=Path, default=HF_AUDIO_DIR, help="Source directory for audio files")
     hf_dataset_push.add_argument("--ground-truth-dir", type=Path, default=HF_GROUND_TRUTH_DIR, help="Source directory for ground truth files")
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -18,6 +19,23 @@ from eval_transcript.huggingface import (
 class FakeInfo:
     def __init__(self, private: bool) -> None:
         self.private = private
+
+
+class TestFakeMatchesRealApi(unittest.TestCase):
+    def test_fake_dataset_info_matches_real_signature(self) -> None:
+        # A fake that accepts a keyword the real HfApi rejects hides the bug in
+        # tests while every production push fails, so pin the two together.
+        try:
+            from huggingface_hub import HfApi
+        except ImportError:  # pragma: no cover - huggingface_hub is a core dep
+            self.skipTest("huggingface_hub not installed")
+        real = inspect.signature(HfApi.dataset_info).parameters
+        fake = inspect.signature(FakeHfApi.dataset_info).parameters
+        self.assertEqual(
+            sorted(name for name in fake if name != "self"),
+            sorted(name for name in fake if name in real and name != "self"),
+        )
+        self.assertEqual(fake["repo_id"].kind, real["repo_id"].kind)
 
 
 class FakeOperation:
@@ -46,12 +64,12 @@ class FakeHfApi:
     def list_repo_files(self, repo_id: str, *, repo_type: str, revision: str | None = None) -> list[str]:
         return list(self.files)
 
-    def dataset_info(self, repo_id: str, *, repo_type: str, revision: str | None = None) -> FakeInfo:
+    def dataset_info(self, repo_id: str, *, revision: str | None = None) -> FakeInfo:
         if self.dataset_info_error is not None:
             raise self.dataset_info_error
         if self.info is None:
             raise _repository_not_found_error()()
-        self.infos.append({"repo_id": repo_id, "repo_type": repo_type, "revision": revision})
+        self.infos.append({"repo_id": repo_id, "revision": revision})
         return self.info
 
     def create_repo(
