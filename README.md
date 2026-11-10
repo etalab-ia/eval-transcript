@@ -105,14 +105,23 @@ After downloading a candidate locally and restarting or refreshing oMLX model di
 uv run eval-transcript omlx models
 ```
 
-Then pass that exact alias to the transcription command. If oMLX exposes the repository name as the alias, the command is:
+If the model is only in your HuggingFace cache and does **not** appear in `omlx models`, oMLX's discovery skipped it: its HF-cache heuristic only auto-trusts a hardcoded list of repo names, and `CohereLabs/...` is not on it. Symlink the snapshot into the oMLX model directory and restart the server so it is discovered as a local model (local dirs are classified by `model_type`, here `cohere_asr`, which mlx-audio supports):
+
+```bash
+mkdir -p ~/.omlx/models
+ln -s ~/.cache/huggingface/hub/models--CohereLabs--cohere-transcribe-03-2026/snapshots/<hash> \
+  ~/.omlx/models/cohere-transcribe-03-2026
+```
+
+Then pass that exact alias to the transcription command. For French you **must** pass `--language fr`:
 
 ```bash
 uv run eval-transcript omlx transcribe data/audio/sample.wav \
-  --model cohere-transcribe-03-2026
+  --model cohere-transcribe-03-2026 \
+  --language fr
 ```
 
-If oMLX exposes a different alias, use the alias printed by `omlx models` instead. Cohere Transcribe supports French, but on oMLX `0.3.12` the `--language fr` option is currently broken because oMLX maps `fr` to `french` before calling the Cohere loader. Omit `--language` for now; the smoke test transcribed French correctly without a language hint.
+If oMLX exposes a different alias, use the alias printed by `omlx models` instead. **The `--language fr` hint is required, not optional**: Cohere's `generate()` defaults to `en`, so without a hint it transcribes French audio *into English* (massive drift — ~70 % WER vs ~13 % with the hint on our FR corpus). On oMLX `0.4.4` the hint passes through correctly, because oMLX gates its `fr`→`french` remapping on a `support_languages` config field while Cohere declares `supported_languages` (ISO codes) and accepts `fr` directly. (The earlier "omit `--language`" advice applied to oMLX `0.3.12`, which mismapped `fr`; do not omit it on 0.4.4+.)
 
 To save the text output for later comparison, use `--save`. The file is written to `data/transcriptions/<audio-stem>/omlx__<model>.txt`:
 
@@ -165,7 +174,7 @@ This reuses the existing oMLX OpenAI-compatible client, so no Kyutai-specific pr
 
 #### Native long-form (Apple Silicon, MLX)
 
-For long files, transcribe directly with the `stt_from_file_mlx.py` script from [`kyutai-labs/delayed-streams-modeling`](https://github.com/kyutai-labs/delayed-streams-modeling) (`scripts/`). It uses the MLX Mimi tokenizer and runs the streaming model end to end, letting the model pick segment boundaries with its built-in semantic VAD — no manual chunking. The script is not part of this repo; download it first, then run it with `uv run --script` (its PEP 723 header pins `moshi_mlx`, so it runs in an isolated env):
+For long files, transcribe directly with the `stt_from_file_mlx.py` script from [`kyutai-labs/delayed-streams-modeling`](https://github.com/kyutai-labs/delayed-streams-modeling) (`scripts/`). It uses the MLX Mimi tokenizer and runs the streaming model end to end. The script is not part of this repo; download it first, then run it with `uv run --script` (its PEP 723 header pins `moshi_mlx`, so it runs in an isolated env):
 
 ```bash
 curl -O https://raw.githubusercontent.com/kyutai-labs/delayed-streams-modeling/main/scripts/stt_from_file_mlx.py
@@ -175,8 +184,16 @@ perl -pi -e 's/--max-steps", default=4096/--max-steps", type=int, default=4096/'
 uv run --script stt_from_file_mlx.py data/audio/sample.mp3 --max-steps 8000
 ```
 
+> [!WARNING]
+> **A single continuous pass collapses past ~4 min — chunk and reset.** Kyutai's transformer has a 3000-frame context (≈4 min at 12.5 Hz) backed by a rotating KV cache. Running one uninterrupted streaming pass on a longer file (as the command above does) makes the cache and RoPE positions degenerate into a deterministic loop of function words (`encore encore tout`), **regardless of audio difficulty** — reproduced identically on `moshi_mlx` 0.2.12 and 0.3.0. The script's built-in semantic VAD does **not** prevent this; do not rely on it for long audio. Instead, **split the audio into ~30 s segments aligned on the quietest nearby point and reset the model state between segments**:
+>
+> - MLX (`moshi_mlx`): `for c in model.transformer_cache: c.reset()` + `mimi.reset_state()` + a fresh `LmGen` per segment.
+> - transformers (`KyutaiSpeechToTextForConditionalGeneration`): a fresh `generate()` per segment is enough.
+>
+> Each segment then stays well under the 4 min window and transcribes cleanly. Doing this **inside your wrapper server** keeps the `omlx transcribe` call above unchanged. On our FR corpus, chunking takes Kyutai from **43–84 % WER (continuous streaming) back down to the 3–35 % "chunked" tier**, on par with the model's documented quality.
+
 Notes:
-- The script appends ~2 s of zero padding, so set `--max-steps` to about `ceil((duration_seconds + 2) * 12.5)` plus a small margin (the default `4096` truncates around 5.5 min). It must be an integer — hence the `type=int` patch above; without it, `--max-steps 8000` is passed as a string and crashes.
+- For audio **under ~4 min**, the single-pass command above is fine. The script appends ~2 s of zero padding, so set `--max-steps` to about `ceil((duration_seconds + 2) * 12.5)` plus a small margin (the default `4096` truncates around 5.5 min). It must be an integer — hence the `type=int` patch above; without it, `--max-steps 8000` is passed as a string and crashes.
 - Avoid `python -m moshi_mlx.run_inference` for long files: its `rustymimi` tokenizer caps around ~11 minutes of audio.
 - The transcript is printed on stdout after the `starting inference ...` line; redirect it and drop the leading log lines to build `data/transcriptions/<audio-stem>/kyutai-native__stt-1b-en_fr.txt`.
 
@@ -328,3 +345,103 @@ Use `--format markdown` or `--format csv` for report-friendly output, and `--out
 `data/manifest.md` uses Markdown with YAML frontmatter to index samples, ground-truth paths, generated outputs, and placeholder metadata such as language, duration, domain, runtime, and real-time factor.
 
 Ground-truth transcripts are matched to a sample by basename and may be either `.txt` or `.md` (for example `data/ground_truth/sample.txt` for `data/audio/sample.wav`).
+
+### Judging semantic severity (LLM-as-a-judge)
+
+WER counts wrong words but is blind to whether an error *changes the meaning* of the meeting (a negation added, a name hallucinated, a whole passage lost). The `judge` command adds a qualitative layer on top of WER: an LLM (served by Albert API, or a third-party model via OpenRouter) compares each generated transcript to the ground truth and reports only the divergences that change the sense, graded on a severity scale.
+
+```bash
+# Judge every transcript of one sample
+uv run eval-transcript judge sample --output data/reports/judge_sample.md
+
+# Judge the whole corpus
+uv run eval-transcript judge
+
+# Judge with a third-party model via OpenRouter (avoids a Mistral judge rating a
+# Mistral/Voxtral transcript); defaults to anthropic/claude-sonnet-4.5
+uv run eval-transcript judge --judge-provider openrouter
+uv run eval-transcript judge --judge-provider openrouter --judge-model openai/gpt-5
+```
+
+Severity scale (G0 cosmetic differences are out of scope, already neutralized by WER):
+
+- **G3 — critical**: meaning/polarity inversion (negation added or removed, success↔failure, rhetorical question turned into an assertion), hallucination of a fact/number/person, or `effondrement` (a whole passage lost or replaced by gibberish).
+- **G2 — major**: substantial information lost, or a key term garbled into a different referent.
+- **G1 — minor**: still recoverable from context (a misspelled but identifiable name, a deformed technical term).
+
+Each finding quotes both sides **verbatim**; a finding whose extract is not a literal substring of both the ground truth and the hypothesis is flagged `non-verbatim` (guards against the judge hallucinating divergences). The report ranks transcripts by a continuous **gravity score** (`G1×1, G2×2, G3×6, effondrement×12`) normalized per 1000 reference words, so audios of different difficulty stay comparable; a coarse verdict (`fidele` / `alterations_mineures` / `sens_degrade` / `inexploitable`) is derived from that score.
+
+Options: `--judge-provider {albert,openrouter}` (default `albert`), `--judge-model` (default `mistral-medium-2508` on Albert — the rubric calibration is tuned for it, `openai/gpt-oss-120b` under-detects polarity inversions; default `anthropic/claude-sonnet-4.5` on OpenRouter), `--passes N` for self-consistency (keeps only G3 findings stable across passes), `--hide-g1` to drop minor findings from the detail, `--output PATH` to write the Markdown report.
+
+**Judge providers.** Albert requires `ALBERT_API_KEY`. OpenRouter requires `OPENROUTER_API_KEY` (OpenAI-compatible, same `/chat/completions` schema) and lets you pick a *third-party* judge — useful to remove the bias of a Mistral model judging a transcript produced by Mistral/Voxtral. Any model id from <https://openrouter.ai/models> works via `--judge-model` (e.g. `anthropic/claude-sonnet-4.5`, `openai/gpt-5`, `google/gemini-2.5-pro`). Caveat: the G1/G2/G3 rubric was calibrated against `mistral-medium-2508`; cross-judge gravity counts are not directly comparable — read findings, not raw totals.
+
+### Multi-judge panel (`panel`)
+
+Run several judges in one pass to **compare** them or to build a **consensus** that neutralizes a single judge's bias:
+
+```bash
+# Default panel: Albert/mistral + OpenRouter/claude — comparison table + consensus
+uv run eval-transcript panel --output data/reports/panel.md
+
+# Explicit judges (repeat --judge), unanimity required for a G3 to be kept
+uv run eval-transcript panel \
+  --judge albert:mistral-medium-2508 \
+  --judge openrouter:anthropic/claude-sonnet-4.5 \
+  --judge openrouter:openai/gpt-5 \
+  --consensus-min 2 --mode both
+```
+
+- `--judge PROVIDER[:MODEL]` (repeatable; model optional → provider default). Defaults to `albert` + `openrouter`.
+- `--mode {compare,consensus,both}` (default `both`). `compare` prints a side-by-side table (each judge's score /1k and G3 count per transcript, plus the max spread = disagreement signal). `consensus` keeps a G3 only when enough judges flag the same error — agreement is matched by **reference-extract overlap** (containment), not exact equality, so two judges quoting slightly different spans of the same error still count as agreeing; the most precise (shortest) extract is kept as representative. The synthesis also reports per-transcript **coverage** (`n/panel`) and warns when a judge failed on a transcript (the threshold stays on the full panel, so a lone judge's G3 is not auto-accepted).
+- `--consensus-min N` sets how many judges must agree (default: strict majority of the panel). **Lower-severity (G1/G2) findings in the consensus are taken from the first judge listed** (the primary/calibrated judge) — put `mistral-medium-2508` first; only G3 are put to a vote, since the rubric calibration is judge-specific.
+
+JSON output: the judge forces `response_format: json_object`. If a model (some OpenRouter routes) rejects that parameter, the call automatically retries without it — the parser tolerates fenced/free-form JSON — so JSON mode is an optimization, not a hard requirement.
+
+## Continuous integration (GitHub Actions)
+
+Two manual workflows (`workflow_dispatch`) run the benchmark in CI against the **public** corpus, so results can be produced without a local machine. Both pull the corpus anonymously from a Hugging Face dataset and push their outputs to a separate results dataset.
+
+| Workflow | File | What it does |
+| --- | --- | --- |
+| **Bench remote (officiels)** | `.github/workflows/bench-remote.yml` | Pulls the corpus, transcribes with the API-only models (Albert/Whisper, Voxtral via Scaleway, optionally ElevenLabs), scores the WER, and pushes transcripts plus the report. |
+| **Juge gravité (officiels)** | `.github/workflows/judge.yml` | Pulls references plus existing transcripts, runs the LLM-as-a-judge (`single` or `panel`), and pushes a semantic-severity report. Decoupled from transcription, so you can re-judge without re-transcribing. |
+
+Local-only models (WhisperX, Kyutai, Cohere via MLX) are **not** run in CI: they need a GPU or Apple MLX and would require a self-hosted runner.
+
+### Datasets
+
+| Dataset | Visibility | Content |
+| --- | --- | --- |
+| `AgentPublic/eval-stt-officiels` | public | corpus: `audio/<id>.mp3` and `ground_truth/<id>.txt` (official public speeches) |
+| `AgentPublic/eval-stt-results` | public | `transcriptions/<id>/<provider>__<model>.txt` and `reports/<date>__*.md` |
+
+Only **public** data lives on Hugging Face. Private recordings (for example internal meetings) are personal data and are **never** pushed there; they stay local. If private sources are added later, use a separate private dataset.
+
+### Required secrets
+
+Set these as repository secrets (Settings > Secrets and variables > Actions):
+
+- `ALBERT_API_KEY`: Albert API (Whisper transcription and the Mistral-Medium judge)
+- `SCW_SECRET_KEY`, `SCW_DEFAULT_PROJECT_ID`: Scaleway (Voxtral)
+- `OPENROUTER_API_KEY`: third-party judge for the `panel` mode
+- `HF_TOKEN`: Hugging Face token with write access to the AgentPublic results dataset
+- `ELEVENLABS_API_KEY`: optional, only if ElevenLabs is included
+
+### Running
+
+Trigger from the Actions tab (Run workflow, branch `main`). The bench accepts a `providers` input (default `albert,scaleway`); the judge accepts `mode` (`single`/`panel`) and `passes`. Each run consumes billable API calls, so the workflows are manual by design. Outputs are also uploaded as workflow artifacts.
+
+### Pushing local transcripts to the results dataset
+
+The CI only covers the API models. Local models (WhisperX, Kyutai, Cohere via MLX) run on your machine; push their outputs to the results dataset so the WER and judge cover every model:
+
+```bash
+# Dry-run: show what would be pushed (and what is skipped)
+uv run eval-transcript results push --dry-run
+
+# Push for real (single commit); optionally filter by file name
+uv run eval-transcript results push
+uv run eval-transcript results push --include whisperx
+```
+
+Safety: the command derives the public allowlist from the **corpus** dataset (`ground_truth/<id>`) and uploads only transcripts whose sample is in it. Any local transcript for a sample absent from the public corpus (internal meeting, removed sample) is skipped, so private data never reaches the Hub. Override the repos with `--corpus` / `--results` (or `EVAL_CORPUS_REPO` / `EVAL_RESULTS_REPO`); pushing needs `HF_TOKEN` with write access.

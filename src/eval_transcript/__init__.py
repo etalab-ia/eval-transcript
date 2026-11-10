@@ -23,6 +23,22 @@ from eval_transcript.elevenlabs import (
     ElevenLabsError,
     elevenlabs_transcription_text,
 )
+from eval_transcript.judge import DEFAULT_JUDGE_MODEL, JudgeError
+from eval_transcript.judge_cli import (
+    JudgeCliError,
+    render_markdown as render_judge_markdown,
+    run_judge,
+    write_or_print_report as write_or_print_judge_report,
+)
+from eval_transcript.openrouter import (
+    DEFAULT_JUDGE_MODEL as OPENROUTER_DEFAULT_JUDGE_MODEL,
+    OpenRouterClient,
+)
+from eval_transcript.panel import (
+    parse_judge_spec,
+    render_panel_markdown,
+    run_panel,
+)
 from eval_transcript.manifest import DEFAULT_MANIFEST_PATH, discover_samples, render_manifest
 from eval_transcript.omlx import DEFAULT_API_KEY_ENV as OMLX_API_KEY_ENV, OmlxClient, OmlxError
 from eval_transcript.scaleway import (
@@ -50,6 +66,13 @@ from eval_transcript.huggingface import (
     DEFAULT_GROUND_TRUTH_DIR as HF_GROUND_TRUTH_DIR,
     HuggingFaceClient,
     HuggingFaceError,
+)
+from eval_transcript.results import (
+    DEFAULT_CORPUS_REPO,
+    DEFAULT_RESULTS_REPO,
+    DEFAULT_TRANSCRIPTIONS_DIR as RESULTS_DEFAULT_TRANSCRIPTIONS_DIR,
+    ResultsClient,
+    ResultsError,
 )
 
 
@@ -222,6 +245,43 @@ def main() -> None:
     hf_dataset_push.add_argument("--audio-dir", type=Path, default=HF_AUDIO_DIR, help="Source directory for audio files")
     hf_dataset_push.add_argument("--ground-truth-dir", type=Path, default=HF_GROUND_TRUTH_DIR, help="Source directory for ground truth files")
 
+    judge = subparsers.add_parser("judge", help="LLM-as-a-judge: gravité sémantique des transcripts (Albert API ou OpenRouter)")
+    judge.add_argument("sample_id", nargs="?", default=None, help="Sample ID; omettre pour juger tout le corpus")
+    judge.add_argument("--ground-truth-dir", type=Path, default=SCORING_DEFAULT_GROUND_TRUTH_DIR, help="Directory containing ground truth .md or .txt files")
+    judge.add_argument("--source-truth-dir", type=Path, default=None, help=argparse.SUPPRESS)
+    judge.add_argument("--transcriptions-dir", type=Path, default=SCORING_DEFAULT_TRANSCRIPTIONS_DIR, help="Directory containing generated transcript outputs")
+    judge.add_argument("--judge-provider", choices=["albert", "openrouter"], default="albert", help="Fournisseur du modèle juge (défaut: albert). 'openrouter' permet un juge tiers non-Mistral, sans biais de famille.")
+    judge.add_argument("--judge-model", default=None, help=f"Modèle juge. Défaut selon le provider : albert→{DEFAULT_JUDGE_MODEL}, openrouter→{OPENROUTER_DEFAULT_JUDGE_MODEL}")
+    judge.add_argument("--passes", type=int, default=1, help="Nombre de passes self-consistency (>1 ne garde que les G3 stables)")
+    judge.add_argument("--output", type=Path, default=None, help="Écrire le rapport markdown ici au lieu de stdout")
+    judge.add_argument("--hide-g1", action="store_true", help="Masquer les écarts mineurs (G1) dans le détail")
+
+    panel = subparsers.add_parser("panel", help="Panel multi-juges: compare plusieurs juges et/ou calcule un consensus G3")
+    panel.add_argument("sample_id", nargs="?", default=None, help="Sample ID; omettre pour juger tout le corpus")
+    panel.add_argument("--ground-truth-dir", type=Path, default=SCORING_DEFAULT_GROUND_TRUTH_DIR, help="Directory containing ground truth .md or .txt files")
+    panel.add_argument("--source-truth-dir", type=Path, default=None, help=argparse.SUPPRESS)
+    panel.add_argument("--transcriptions-dir", type=Path, default=SCORING_DEFAULT_TRANSCRIPTIONS_DIR, help="Directory containing generated transcript outputs")
+    panel.add_argument("--judge", action="append", dest="judges", metavar="PROVIDER[:MODEL]", help="Juge à inclure, répétable. Ex: --judge albert --judge openrouter:anthropic/claude-sonnet-4.5 (défaut: albert + openrouter)")
+    panel.add_argument("--mode", choices=["compare", "consensus", "both"], default="both", help="compare (tableau côte à côte), consensus (panel G3), ou both (défaut)")
+    panel.add_argument("--consensus-min", type=int, default=None, help="Nb min de juges devant s'accorder pour retenir un G3 (défaut: majorité stricte)")
+    panel.add_argument("--passes", type=int, default=1, help="Passes self-consistency PAR juge")
+    panel.add_argument("--output", type=Path, default=None, help="Écrire le rapport markdown ici au lieu de stdout")
+    panel.add_argument("--hide-g1", action="store_true", help="Masquer les écarts mineurs (G1) dans le détail du consensus")
+
+    results = subparsers.add_parser("results", help="Gérer le dataset de résultats (transcripts locaux -> Hugging Face)")
+    results_subparsers = results.add_subparsers(dest="results_command")
+    results_push = results_subparsers.add_parser(
+        "push",
+        help="Pousser les transcripts locaux vers le dataset de résultats (officiels uniquement)",
+    )
+    results_push.add_argument("--transcriptions-dir", type=Path, default=RESULTS_DEFAULT_TRANSCRIPTIONS_DIR, help="Dossier des transcripts locaux")
+    results_push.add_argument("--include", default=None, help="Ne garder que les fichiers dont le nom contient cette chaîne (ex: whisperx, kyutai, cohere)")
+    results_push.add_argument("--corpus", default=None, help=f"Dataset corpus (allowlist des officiels); défaut $EVAL_CORPUS_REPO ou {DEFAULT_CORPUS_REPO}")
+    results_push.add_argument("--results", dest="results_repo", default=None, help=f"Dataset résultats; défaut $EVAL_RESULTS_REPO ou {DEFAULT_RESULTS_REPO}")
+    results_push.add_argument("--token", default=None, help="Token Hugging Face write; défaut $HF_TOKEN")
+    results_push.add_argument("--message", default="Push local transcripts (officiels only)", help="Message de commit")
+    results_push.add_argument("--dry-run", action="store_true", help="Afficher le plan sans rien pousser")
+
     args = parser.parse_args()
 
     try:
@@ -230,6 +290,55 @@ def main() -> None:
             args.manifest.parent.mkdir(parents=True, exist_ok=True)
             args.manifest.write_text(manifest_text, encoding="utf-8")
             print(args.manifest)
+            return
+
+        if args.command == "judge":
+            if args.output is not None and args.output.is_dir():
+                raise JudgeCliError(f"Output path must be a file, not a directory: {args.output}")
+            if args.judge_provider == "openrouter":
+                judge_client = OpenRouterClient()
+                judge_provider_label = "OpenRouter"
+                judge_model = args.judge_model or OPENROUTER_DEFAULT_JUDGE_MODEL
+            else:
+                judge_client = AlbertClient()
+                judge_provider_label = "Albert API"
+                judge_model = args.judge_model or DEFAULT_JUDGE_MODEL
+            results = run_judge(
+                args.sample_id,
+                ground_truth_dir=resolve_ground_truth_dir(args),
+                transcriptions_dir=args.transcriptions_dir,
+                judge_model=judge_model,
+                passes=args.passes,
+                client=judge_client,
+            )
+            report = render_judge_markdown(
+                results, include_g1=not args.hide_g1, judge_provider=judge_provider_label
+            )
+            write_or_print_judge_report(report, output_path=args.output)
+            return
+
+        if args.command == "panel":
+            if args.output is not None and args.output.is_dir():
+                raise JudgeCliError(f"Output path must be a file, not a directory: {args.output}")
+            raw_specs = args.judges or ["albert", "openrouter"]
+            try:
+                specs = [parse_judge_spec(s) for s in raw_specs]
+            except ValueError as exc:
+                raise JudgeCliError(str(exc)) from exc
+            results_by_spec = run_panel(
+                args.sample_id,
+                specs,
+                ground_truth_dir=resolve_ground_truth_dir(args),
+                transcriptions_dir=args.transcriptions_dir,
+                passes=args.passes,
+            )
+            report = render_panel_markdown(
+                results_by_spec,
+                mode=args.mode,
+                min_agree=args.consensus_min,
+                include_g1=not args.hide_g1,
+            )
+            write_or_print_judge_report(report, output_path=args.output)
             return
 
         if args.command == "data" and args.data_command == "migrate":
@@ -411,7 +520,41 @@ def main() -> None:
             client.push(message=args.message)
             print(f"Uploaded local corpus to {client.repo_id}")
             return
-    except (FileNotFoundError, DataMigrationError, HuggingFaceError, ScoringError, AlbertError, ScalewayError, ElevenLabsError, OmlxError, httpx.HTTPError) as exc:
+
+        if args.command == "results" and args.results_command == "push":
+            client = ResultsClient(
+                corpus_repo=args.corpus,
+                results_repo=args.results_repo,
+                token=args.token,
+            )
+            plan = client.plan(transcriptions_dir=args.transcriptions_dir, include=args.include)
+            print(f"Corpus public ({len(plan.officiels)} samples): {', '.join(plan.officiels)}")
+            print(f"À pousser : {len(plan.uploads)} fichier(s) vers {plan.results_repo}")
+            for u in plan.uploads:
+                print(f"  + {u.path_in_repo}")
+            if plan.skipped_samples:
+                print(f"Ignorés (hors corpus public): {', '.join(plan.skipped_samples)}")
+            if args.dry_run:
+                print("[dry-run] relancer sans --dry-run pour pousser.")
+                return
+            client.push(plan, message=args.message)
+            if plan.uploads:
+                print(f"Poussé {len(plan.uploads)} fichier(s) vers {plan.results_repo}")
+            return
+    except (
+        FileNotFoundError,
+        DataMigrationError,
+        HuggingFaceError,
+        ScoringError,
+        JudgeCliError,
+        JudgeError,
+        AlbertError,
+        ScalewayError,
+        ElevenLabsError,
+        OmlxError,
+        ResultsError,
+        httpx.HTTPError,
+    ) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
@@ -431,5 +574,7 @@ def main() -> None:
         omlx.print_help()
     elif args.command == "huggingface":
         huggingface.print_help()
+    elif args.command == "results":
+        results.print_help()
     else:
         parser.print_help()
